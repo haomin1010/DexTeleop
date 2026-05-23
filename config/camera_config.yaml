@@ -1,0 +1,78 @@
+global:
+  startup_delay: 2.0
+  enable_sync: false
+
+cameras:
+  head:
+    enabled: true
+    type: usb
+    video_device: /dev/stereo_camera
+    pixel_format: mjpeg2rgb
+    io_method: mmap
+    resolution:
+      width: 2560
+      height: 720
+      fps: 60
+    camera_name: cam_head
+    streams:
+      enable_color: true
+      enable_depth: false
+      align_depth: false
+      enable_pointcloud: false
+      enable_gyro: false
+      enable_accel: false
+    tf:
+      parent_frame: base_link
+      child_frame: cam_head_link
+      translation: [0.0, 0.0, 0.5]
+      rotation: [0.0, 0.3, 0.0]
+
+  left_wrist:
+    enabled: true
+    type: d405
+    serial_number: LEFT_WRIST_REALSENSE_SN
+    video_device: /dev/cam_left_wrist
+    pixel_format: mjpeg2rgb
+    io_method: mmap
+    resolution:
+      width: 848
+      height: 480
+      fps: 30
+    camera_name: cam_left_wrist
+    streams:
+      enable_color: true
+      enable_depth: false
+      align_depth: false
+      enable_pointcloud: false
+      enable_gyro: false
+      enable_accel: false
+    tf:
+      parent_frame: left_wrist_link
+      child_frame: cam_left_wrist_link
+      translation: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]
+
+  right_wrist:
+    enabled: true
+    type: d405
+    serial_number: RIGHT_WRIST_REALSENSE_SN
+    video_device: /dev/cam_right_wrist
+    pixel_format: mjpeg2rgb
+    io_method: mmap
+    resolution:
+      width: 848
+      height: 480
+      fps: 30
+    camera_name: cam_right_wrist
+    streams:
+      enable_color: true
+      enable_depth: false
+      align_depth: false
+      enable_pointcloud: false
+      enable_gyro: false
+      enable_accel: false
+    tf:
+      parent_frame: right_wrist_link
+      child_frame: cam_right_wrist_link
+      translation: [0.0, 0.0, 0.0]
+      rotation: [0.0, 0.0, 0.0]

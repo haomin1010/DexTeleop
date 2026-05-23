@@ -1,0 +1,14 @@
+mode: dual
+
+hands:
+  left:
+    glove_sn: "LEFT_GLOVE_SN"
+    hand_sn: "LEFT_HAND_SN"
+    glove_device_name: "glove"
+    retarget_config: "config/adaptive_analytical_wuji_glove_left.yaml"
+
+  right:
+    glove_sn: "RIGHT_GLOVE_SN"
+    hand_sn: "RIGHT_HAND_SN"
+    glove_device_name: "glove"
+    retarget_config: "config/adaptive_analytical_wuji_glove_right.yaml"
