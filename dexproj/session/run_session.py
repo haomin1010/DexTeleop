@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import shlex
 import subprocess
 import time
 from contextlib import suppress
@@ -17,8 +18,8 @@ except ImportError:  # pragma: no cover
 
 from dexproj.check_devices.cli import collect_report, evaluate_report
 from dexproj.hand_teleop.config import HandChannelConfig, HandTeleopConfig
-from dexproj.integration.bringup import BringupConfig, resolve_launch_command
-from dexproj.recording.ros_writers import RosImageFrameRecorder, RosTopicRecorder
+from dexproj.integration.bringup import BringupConfig, apply_hand_teleop_overrides, resolve_launch_command
+from dexproj.recording.ros_writers import JointCsvPairRecorder, RosImageFrameRecorder
 from dexproj.recording.session_recorder import SessionRecorder
 from dexproj.recording.tj_raw import TJRawEpisodeWriter
 from dexproj.session.runtime_support import (
@@ -33,13 +34,6 @@ from dexproj.session.runtime_support import (
 VALID_TRIGGER_MODES = {"gamepad", "keyboard", "both"}
 VALID_RUNTIME_STATES = {"initialized", "ready", "running", "stopped"}
 VALID_SESSION_MODES = {"single_left", "single_right", "dual"}
-
-ARM_TOPIC_SPECS = [
-    {"name": "tianji_left_joint_state", "topic": "/tianji_arm/left/joint_state", "schema": "float_array"},
-    {"name": "tianji_right_joint_state", "topic": "/tianji_arm/right/joint_state", "schema": "float_array"},
-    {"name": "wujihand_left_joint_state", "topic": "/wuji_hand/left/joint_state", "schema": "float_array"},
-    {"name": "wujihand_right_joint_state", "topic": "/wuji_hand/right/joint_state", "schema": "float_array"},
-]
 
 CAMERA_TOPIC_SPECS = [
     {"name": "head", "topic": "/cam_head/color/image_raw", "schema": "image"},
@@ -113,7 +107,7 @@ class SessionRuntime:
         self.status_writer: PeriodicStatusWriter | None = None
         self.process_group = ManagedProcessGroup()
         self.tj_raw_writer: TJRawEpisodeWriter | None = None
-        self.arm_topic_writers: list[RosTopicRecorder] = []
+        self.joint_writers: list[JointCsvPairRecorder] = []
         self.camera_writers: list[RosImageFrameRecorder] = []
         self._ensure_valid_state()
 
@@ -158,13 +152,11 @@ class SessionRuntime:
         if self.status_writer is not None:
             self.status_writer.stop()
         self.process_group.stop_all()
-        for recorder in self.arm_topic_writers:
+        for recorder in self.joint_writers:
             recorder.stop()
         for recorder in self.camera_writers:
             recorder.stop()
         if self.tj_raw_writer is not None:
-            self.tj_raw_writer.append_arm(0, self._build_status_snapshot())
-            self._append_camera_index_markers()
             self.tj_raw_writer.close()
         self.recorder.stop(trigger)
         print(f"[session] state -> {self.state} (trigger={trigger})")
@@ -175,7 +167,7 @@ class SessionRuntime:
                 self.status_writer.stop()
         with suppress(Exception):
             self.process_group.stop_all()
-        for recorder in self.arm_topic_writers:
+        for recorder in self.joint_writers:
             with suppress(Exception):
                 recorder.stop()
         for recorder in self.camera_writers:
@@ -196,17 +188,12 @@ class SessionRuntime:
         logs_dir = runtime_dir / "logs"
         logs_dir.mkdir(parents=True, exist_ok=True)
 
-        for spec in ARM_TOPIC_SPECS:
-            path = logs_dir / f"{spec['name']}.ndjson"
-            recorder = RosTopicRecorder(
-                name=spec["name"],
-                topic=spec["topic"],
-                path=path,
-                schema=spec["schema"],
-            )
+        for recorder in self._build_joint_recorders(episode_dir):
             recorder.start()
-            self.arm_topic_writers.append(recorder)
-            self.recorder.register_writer("logs", spec["name"], path)
+            self.joint_writers.append(recorder)
+            self.recorder.register_writer("data", f"{recorder.name}_timestamp", recorder.timestamp_path)
+            self.recorder.register_writer("data", f"{recorder.name}_observation_state", recorder.observation_path)
+            self.recorder.register_writer("data", f"{recorder.name}_action", recorder.action_path)
 
         camera_root = episode_dir / "camera_data"
         for spec in CAMERA_TOPIC_SPECS:
@@ -225,16 +212,56 @@ class SessionRuntime:
         sample_info_path = episode_dir / "_runtime" / "sample_info.json"
         self.recorder.register_log_artifact("sample_info", sample_info_path)
 
-    def _append_camera_index_markers(self) -> None:
-        if self.tj_raw_writer is None:
-            return
-        now = time.time()
-        for camera_name in [spec["name"] for spec in CAMERA_TOPIC_SPECS]:
-            self.tj_raw_writer.append_camera_frame(camera_name, 0, now, self._camera_csv_path(camera_name))
+    def _build_joint_recorders(self, episode_dir: Path) -> list[JointCsvPairRecorder]:
+        hand_input = str(self.plan.get("bringup", {}).get("hand_input", "none"))
+        if hand_input == "manus":
+            hand_state_topics = {
+                "left": "/left_hand/joint_states",
+                "right": "/right_hand/joint_states",
+            }
+            hand_action_topics = {
+                "left": "/wuji_hand/left/joint_command",
+                "right": "/wuji_hand/right/joint_command",
+            }
+        else:
+            hand_state_topics = {
+                "left": "/wuji_hand/left/joint_state",
+                "right": "/wuji_hand/right/joint_state",
+            }
+            hand_action_topics = dict(hand_state_topics)
 
-    def _camera_csv_path(self, camera_name: str) -> Path:
-        assert self.recorder.paths is not None
-        return self.recorder.paths.episode_dir / "camera_data" / camera_name / "frames.csv"
+        return [
+            JointCsvPairRecorder(
+                name="arm",
+                state_topics={
+                    "left": "/tianji_arm/left/joint_state",
+                    "right": "/tianji_arm/right/joint_state",
+                },
+                action_topics={
+                    "left": "/tianji_arm/left/joint_command",
+                    "right": "/tianji_arm/right/joint_command",
+                },
+                timestamp_path=episode_dir / "arm_data" / "timestamp.csv",
+                observation_path=episode_dir / "arm_data" / "observation_state.csv",
+                action_path=episode_dir / "arm_data" / "action.csv",
+                columns_by_side={
+                    "left": [f"left_joint_{index}.pos" for index in range(1, 8)],
+                    "right": [f"right_joint_{index}.pos" for index in range(1, 8)],
+                },
+            ),
+            JointCsvPairRecorder(
+                name="hand",
+                state_topics=hand_state_topics,
+                action_topics=hand_action_topics,
+                timestamp_path=episode_dir / "hand_data" / "timestamp.csv",
+                observation_path=episode_dir / "hand_data" / "observation_state.csv",
+                action_path=episode_dir / "hand_data" / "action.csv",
+                columns_by_side={
+                    "left": [f"left_finger{finger}_joint{joint}" for finger in range(1, 6) for joint in range(1, 5)],
+                    "right": [f"right_finger{finger}_joint{joint}" for finger in range(1, 6) for joint in range(1, 5)],
+                },
+            ),
+        ]
 
     def _build_status_snapshot(self) -> dict:
         return {
@@ -265,7 +292,12 @@ def _build_trigger(trigger_cfg: TriggerConfig):
     )
 
 
-def _load_plan(config: SessionConfig, bringup_command: list[str], hand_cfg: HandTeleopConfig) -> dict:
+def _load_plan(
+    config: SessionConfig,
+    bringup_command: list[str],
+    hand_cfg: HandTeleopConfig,
+    bringup_cfg: BringupConfig,
+) -> dict:
     if config.mode not in VALID_SESSION_MODES:
         raise ValueError(f"Unsupported session mode: {config.mode}")
 
@@ -285,6 +317,9 @@ def _load_plan(config: SessionConfig, bringup_command: list[str], hand_cfg: Hand
         "bringup": {
             "config": config.bringup_config,
             "command": bringup_command,
+            "hand_input": bringup_cfg.hand_input,
+            "arm_input": bringup_cfg.arm_input,
+            "enable_arm": bringup_cfg.enable_arm,
         },
         "hand_teleop": {
             "config": config.hand_teleop_config,
@@ -336,12 +371,27 @@ def _build_hand_processes(plan: dict) -> list[ManagedProcessSpec]:
     hand_plan = plan.get("hand_teleop", {})
     mode = str(hand_plan.get("mode", "dual"))
     base_cmd = ["python3", "wuji-retargeting/example/teleop_real.py", "--input", "wuji_glove"]
+
+    def _build_channel_command(channel: dict) -> list[str]:
+        side = channel["side"]
+        cmd = base_cmd + ["--hand", side, "--glove-sn", channel["glove_sn"]]
+        hand_sn = str(channel.get("hand_sn", "") or "").strip()
+        device_name = str(channel.get("glove_device_name", "") or "").strip()
+        retarget_config = str(channel.get("retarget_config", "") or "").strip()
+        if hand_sn:
+            cmd.extend(["--hand-sn", hand_sn])
+        if device_name:
+            cmd.extend(["--device-name", device_name])
+        if retarget_config:
+            cmd.extend(["--config", retarget_config])
+        return cmd
+
     if mode in {"single_left", "single_right"}:
         channel = hand_plan.get("left" if mode == "single_left" else "right")
         if not channel:
             raise ValueError(f"Missing hand config for mode {mode}")
         side = channel["side"]
-        cmd = base_cmd + ["--hand", side, "--glove-sn", channel["glove_sn"]]
+        cmd = _build_channel_command(channel)
         specs.append(
             ManagedProcessSpec(
                 name=f"hand_{side}",
@@ -357,7 +407,7 @@ def _build_hand_processes(plan: dict) -> list[ManagedProcessSpec]:
         channel = hand_plan.get(side)
         if not channel:
             raise ValueError(f"Missing {side} hand config for dual mode")
-        cmd = base_cmd + ["--hand", side, "--glove-sn", channel["glove_sn"]]
+        cmd = _build_channel_command(channel)
         specs.append(
             ManagedProcessSpec(
                 name=f"hand_{side}",
@@ -371,6 +421,12 @@ def _build_hand_processes(plan: dict) -> list[ManagedProcessSpec]:
 
 
 def _start_processes(plan: dict, dry_run: bool) -> ManagedProcessGroup:
+    group = ManagedProcessGroup(_build_process_specs(plan), dry_run=dry_run)
+    group.start_all()
+    return group
+
+
+def _build_process_specs(plan: dict) -> list[ManagedProcessSpec]:
     logs_dir = Path("data").resolve() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
     specs = [
@@ -384,24 +440,29 @@ def _start_processes(plan: dict, dry_run: bool) -> ManagedProcessGroup:
     ]
     if plan.get("camera", {}).get("enabled", False):
         specs.append(_build_camera_process(plan))
-    specs.extend(_build_hand_processes(plan))
-    group = ManagedProcessGroup(specs, dry_run=dry_run)
-    group.start_all()
-    return group
+    if str(plan.get("bringup", {}).get("hand_input", "none")) == "none":
+        specs.extend(_build_hand_processes(plan))
+    return specs
+
+
+def _print_dry_run(plan: dict) -> None:
+    for spec in _build_process_specs(plan):
+        command = " ".join(shlex.quote(token) for token in spec.command)
+        print(f"[dry-run] {spec.name}: {command}")
 
 
 def _resolve_configs(config_path: Path) -> tuple[SessionConfig, BringupConfig, HandTeleopConfig, list[str]]:
     session_cfg = SessionConfig.from_yaml(config_path)
     bringup_cfg = BringupConfig.from_yaml(Path(session_cfg.bringup_config).expanduser().resolve())
     hand_cfg = HandTeleopConfig.from_yaml(Path(session_cfg.hand_teleop_config).expanduser().resolve())
-    bringup_command = resolve_launch_command(bringup_cfg)
+    bringup_command = apply_hand_teleop_overrides(resolve_launch_command(bringup_cfg), hand_cfg, bringup_cfg.mode)
     return session_cfg, bringup_cfg, hand_cfg, bringup_command
 
 
 def main() -> int:
     args = build_arg_parser().parse_args()
     config_path = Path(args.config).expanduser().resolve()
-    session_cfg, _, hand_cfg, bringup_command = _resolve_configs(config_path)
+    session_cfg, bringup_cfg, hand_cfg, bringup_command = _resolve_configs(config_path)
 
     if not args.skip_preflight:
         preflight_report = collect_report(Path(session_cfg.openvr_config).expanduser().resolve())
@@ -412,7 +473,11 @@ def main() -> int:
             print("[preflight] Use `python3 -m dexproj.check_devices` for details.")
             return 2
 
-    plan = _load_plan(session_cfg, bringup_command, hand_cfg)
+    plan = _load_plan(session_cfg, bringup_command, hand_cfg, bringup_cfg)
+    if args.dry_run:
+        _print_dry_run(plan)
+        return 0
+
     runtime = SessionRuntime(plan)
     try:
         runtime.enter_ready()

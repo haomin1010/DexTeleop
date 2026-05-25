@@ -23,6 +23,7 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 from dexproj.check_devices.cli import collect_report, evaluate_report
+from dexproj.hand_teleop.config import HandTeleopConfig
 
 VALID_MODES = {"single_left", "single_right", "dual"}
 
@@ -32,7 +33,8 @@ class BringupConfig:
     mode: str = "dual"
     enable_camera: bool = False
     enable_rviz: bool = False
-    hand_input: str = "manus"
+    enable_arm: bool = True
+    hand_input: str = "wuji_glove"
     arm_input: str = "tracker"
 
     @classmethod
@@ -47,7 +49,8 @@ class BringupConfig:
             mode=str(raw.get("mode", "dual")),
             enable_camera=bool(raw.get("enable_camera", False)),
             enable_rviz=bool(raw.get("enable_rviz", False)),
-            hand_input=str(raw.get("hand_input", "manus")),
+            enable_arm=bool(raw.get("enable_arm", True)),
+            hand_input=str(raw.get("hand_input", "wuji_glove")),
             arm_input=str(raw.get("arm_input", "tracker")),
         )
 
@@ -58,6 +61,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--config",
         default="config/bringup_htc.yaml",
         help="DexProj bringup config file.",
+    )
+    parser.add_argument(
+        "--hand-teleop-config",
+        default="config/hand_teleop_wuji_glove.yaml",
+        help="DexProj hand teleop config file.",
     )
     parser.add_argument(
         "--mode",
@@ -76,6 +84,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Enable RViz even if config disables it.",
     )
     parser.add_argument(
+        "--hand-only",
+        action="store_true",
+        help="Disable arm/tracker bringup and launch hand nodes only.",
+    )
+    parser.add_argument(
         "--dry-run",
         action="store_true",
         help="Print the resolved ros2 launch command without executing it.",
@@ -89,17 +102,34 @@ def build_arg_parser() -> argparse.ArgumentParser:
 
 
 def resolve_launch_command(config: BringupConfig) -> list[str]:
-    if config.arm_input != "tracker":
+    if config.enable_arm and config.arm_input != "tracker":
         raise ValueError(
             f"DexProj only supports HTC/OpenVR arm input for now, got {config.arm_input!r}."
         )
     if config.mode not in VALID_MODES:
         raise ValueError(f"Unsupported mode: {config.mode}")
+    if not config.enable_arm and config.enable_camera:
+        raise ValueError("Hand-only bringup does not support camera launch yet.")
 
     launch_file: str
     extra_args: list[str] = []
 
-    if config.mode == "dual":
+    if not config.enable_arm:
+        if config.mode == "dual":
+            launch_file = "wuji_teleop_hand.launch.py"
+            extra_args.append(f"hand_input:={config.hand_input}")
+        else:
+            launch_file = "wuji_teleop_single.launch.py"
+            side = "left" if config.mode == "single_left" else "right"
+            extra_args.extend(
+                [
+                    f"side:={side}",
+                    f"hand_input:={config.hand_input}",
+                    f"arm_input:={config.arm_input}",
+                    "enable_arm:=false",
+                ]
+            )
+    elif config.mode == "dual":
         launch_file = "wuji_teleop_camera.launch.py" if config.enable_camera else "wuji_teleop.launch.py"
         extra_args.extend(
             [
@@ -122,7 +152,8 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
         if config.enable_camera:
             extra_args.append("enable_camera:=true")
 
-    extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
+    if config.enable_arm:
+        extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
 
     return [
         "ros2",
@@ -133,10 +164,48 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
     ]
 
 
+def apply_hand_teleop_overrides(command: list[str], hand_cfg: HandTeleopConfig, run_mode: str) -> list[str]:
+    updated = list(command)
+
+    if hand_cfg.left is not None:
+        updated.extend(
+            [
+                f"left_serial:={hand_cfg.left.hand_sn}",
+                f"left_glove_sn:={hand_cfg.left.glove_sn}",
+                f"left_device_name:={hand_cfg.left.glove_device_name}",
+            ]
+        )
+        if hand_cfg.left.retarget_config:
+            updated.append(f"left_retarget_config:={hand_cfg.left.retarget_config}")
+    else:
+        updated.append("include_left_hand:=false")
+
+    if hand_cfg.right is not None:
+        updated.extend(
+            [
+                f"right_serial:={hand_cfg.right.hand_sn}",
+                f"right_glove_sn:={hand_cfg.right.glove_sn}",
+                f"right_device_name:={hand_cfg.right.glove_device_name}",
+            ]
+        )
+        if hand_cfg.right.retarget_config:
+            updated.append(f"right_retarget_config:={hand_cfg.right.retarget_config}")
+    else:
+        updated.append("include_right_hand:=false")
+
+    if run_mode == "single_left":
+        updated.append("include_right_hand:=false")
+    elif run_mode == "single_right":
+        updated.append("include_left_hand:=false")
+
+    return updated
+
+
 def main() -> int:
     args = build_arg_parser().parse_args()
     config_path = Path(args.config).expanduser().resolve()
     config = BringupConfig.from_yaml(config_path)
+    hand_cfg = HandTeleopConfig.from_yaml(Path(args.hand_teleop_config).expanduser().resolve())
 
     if args.mode is not None:
         config.mode = args.mode
@@ -144,8 +213,10 @@ def main() -> int:
         config.enable_camera = True
     if args.rviz:
         config.enable_rviz = True
+    if args.hand_only:
+        config.enable_arm = False
 
-    if not args.skip_preflight:
+    if config.enable_arm and not args.skip_preflight:
         preflight_report = collect_report(Path("config/htc_openvr_tracker.yaml").resolve())
         ok, issues = evaluate_report(preflight_report)
         if not ok:
@@ -154,7 +225,7 @@ def main() -> int:
             print("[preflight] Use `python3 -m dexproj.check_devices` for details.")
             return 2
 
-    command = resolve_launch_command(config)
+    command = apply_hand_teleop_overrides(resolve_launch_command(config), hand_cfg, config.mode)
     if args.dry_run:
         print(" ".join(shlex.quote(token) for token in command))
         return 0

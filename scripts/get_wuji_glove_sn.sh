@@ -5,9 +5,9 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 if [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
-    exec "$ROOT_DIR/scripts/ensure_docker_exec.sh" "scripts/check_devices.sh" "$@"
+    exec "$ROOT_DIR/scripts/ensure_docker_exec.sh" "scripts/get_wuji_glove_sn.sh" "$@"
 fi
 
 source "$ROOT_DIR/scripts/activate_dexproj_env.sh"
 
-python3 -m dexproj.check_devices "$@"
+python3 -m dexproj.tools.wuji_glove_sn "$@"

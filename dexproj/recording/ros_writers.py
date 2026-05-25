@@ -15,14 +15,19 @@ try:
     import rclpy
     from rclpy.executors import SingleThreadedExecutor
     from rclpy.node import Node
-    from sensor_msgs.msg import CompressedImage, Image
+    from rclpy.qos import HistoryPolicy, QoSProfile, ReliabilityPolicy
+    from sensor_msgs.msg import CompressedImage, Image, JointState
     from std_msgs.msg import Float32MultiArray
 except ImportError:  # pragma: no cover
     rclpy = None
     SingleThreadedExecutor = None
     Node = object  # type: ignore[assignment]
+    QoSProfile = None  # type: ignore[assignment]
+    ReliabilityPolicy = None  # type: ignore[assignment]
+    HistoryPolicy = None  # type: ignore[assignment]
     Image = object  # type: ignore[assignment]
     CompressedImage = object  # type: ignore[assignment]
+    JointState = object  # type: ignore[assignment]
     Float32MultiArray = object  # type: ignore[assignment]
 
 
@@ -119,6 +124,161 @@ class RosTopicRecorder:
             "data_len": len(data),
             "preview": data[:8],
         }
+
+
+@dataclass
+class JointCsvPairRecorder:
+    name: str
+    state_topics: dict[str, str]
+    action_topics: dict[str, str]
+    timestamp_path: Path
+    observation_path: Path
+    action_path: Path
+    columns_by_side: dict[str, list[str]]
+    interval_sec: float = 0.01
+    side_order: tuple[str, str] = ("left", "right")
+    _thread: threading.Thread | None = field(default=None, init=False)
+    _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
+    _node: Node | None = field(default=None, init=False)
+    _executor: SingleThreadedExecutor | None = field(default=None, init=False)
+    _timestamp_fp: object | None = field(default=None, init=False)
+    _observation_fp: object | None = field(default=None, init=False)
+    _action_fp: object | None = field(default=None, init=False)
+    _timestamp_writer: csv.writer | None = field(default=None, init=False)
+    _observation_writer: csv.writer | None = field(default=None, init=False)
+    _action_writer: csv.writer | None = field(default=None, init=False)
+    _latest_state: dict[str, list[float]] = field(default_factory=dict, init=False)
+    _latest_action: dict[str, list[float]] = field(default_factory=dict, init=False)
+    _lock: threading.Lock = field(default_factory=threading.Lock, init=False)
+    _row_index: int = field(default=0, init=False)
+
+    def start(self) -> None:
+        self.timestamp_path.parent.mkdir(parents=True, exist_ok=True)
+        self._open_csvs()
+        if rclpy is None or Node is object or JointState is object:
+            self._write_placeholder()
+            return
+        if not rclpy.ok():
+            rclpy.init(args=None)
+        self._node = rclpy.create_node(f"dexproj_{self.name}_joint_recorder")
+        self._executor = SingleThreadedExecutor()
+        self._executor.add_node(self._node)
+        self._subscribe()
+        self._thread = threading.Thread(target=self._spin_and_sample, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop_event.set()
+        if self._thread is not None:
+            self._thread.join(timeout=2.0)
+        if self._executor is not None and self._node is not None:
+            self._executor.remove_node(self._node)
+        if self._node is not None:
+            self._node.destroy_node()
+        for handle in [self._timestamp_fp, self._observation_fp, self._action_fp]:
+            if handle is not None:
+                handle.close()
+
+    def _open_csvs(self) -> None:
+        self._timestamp_fp = self.timestamp_path.open("w", newline="", encoding="utf-8")
+        self._observation_fp = self.observation_path.open("w", newline="", encoding="utf-8")
+        self._action_fp = self.action_path.open("w", newline="", encoding="utf-8")
+        self._timestamp_writer = csv.writer(self._timestamp_fp)
+        self._observation_writer = csv.writer(self._observation_fp)
+        self._action_writer = csv.writer(self._action_fp)
+        columns = self._columns()
+        self._timestamp_writer.writerow(["index", "timestamp_unix"])
+        self._observation_writer.writerow(columns)
+        self._action_writer.writerow(columns)
+
+    def _write_placeholder(self) -> None:
+        self._flush_all()
+
+    def _subscribe(self) -> None:
+        assert self._node is not None
+        qos = self._joint_qos()
+        for side, topic in self.state_topics.items():
+            self._node.create_subscription(
+                JointState,
+                topic,
+                lambda msg, side=side: self._joint_cb(msg, side, is_action=False),
+                qos,
+            )
+        for side, topic in self.action_topics.items():
+            self._node.create_subscription(
+                JointState,
+                topic,
+                lambda msg, side=side: self._joint_cb(msg, side, is_action=True),
+                qos,
+            )
+
+    def _joint_qos(self):
+        if QoSProfile is None:
+            return 10
+        return QoSProfile(
+            reliability=ReliabilityPolicy.BEST_EFFORT,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
+
+    def _spin_and_sample(self) -> None:
+        assert self._executor is not None
+        next_sample = time.time()
+        while not self._stop_event.is_set() and rclpy is not None and rclpy.ok():
+            self._executor.spin_once(timeout_sec=0.001)
+            now = time.time()
+            if now < next_sample:
+                continue
+            self._write_sample(now)
+            next_sample += self.interval_sec
+            if next_sample < now:
+                next_sample = now + self.interval_sec
+
+    def _joint_cb(self, msg, side: str, is_action: bool) -> None:
+        values = [float(value) for value in list(getattr(msg, "position", []) or [])]
+        expected = len(self.columns_by_side.get(side, []))
+        if expected > 0:
+            values = values[:expected] + [float("nan")] * max(expected - len(values), 0)
+        with self._lock:
+            target = self._latest_action if is_action else self._latest_state
+            target[side] = values
+
+    def _write_sample(self, timestamp_unix: float) -> None:
+        assert self._timestamp_writer is not None
+        assert self._observation_writer is not None
+        assert self._action_writer is not None
+        with self._lock:
+            if not self._latest_state and not self._latest_action:
+                return
+            state_row = self._row_from_latest(self._latest_state)
+            action_row = self._row_from_latest(self._latest_action)
+        self._row_index += 1
+        self._timestamp_writer.writerow([self._row_index, f"{timestamp_unix:.9f}"])
+        self._observation_writer.writerow(state_row)
+        self._action_writer.writerow(action_row)
+        self._flush_all()
+
+    def _row_from_latest(self, latest: dict[str, list[float]]) -> list[float]:
+        row: list[float] = []
+        for side in self.side_order:
+            width = len(self.columns_by_side.get(side, []))
+            values = latest.get(side)
+            if values is None:
+                row.extend([float("nan")] * width)
+            else:
+                row.extend(values[:width] + [float("nan")] * max(width - len(values), 0))
+        return row
+
+    def _columns(self) -> list[str]:
+        columns: list[str] = []
+        for side in self.side_order:
+            columns.extend(self.columns_by_side.get(side, []))
+        return columns
+
+    def _flush_all(self) -> None:
+        for handle in [self._timestamp_fp, self._observation_fp, self._action_fp]:
+            if handle is not None:
+                handle.flush()
 
 
 @dataclass
