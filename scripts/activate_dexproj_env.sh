@@ -1,4 +1,17 @@
 #!/usr/bin/env bash
+__DEXPROJ_HAD_ERREXIT=0
+__DEXPROJ_HAD_NOUNSET=0
+__DEXPROJ_HAD_PIPEFAIL=0
+case $- in
+    *e*) __DEXPROJ_HAD_ERREXIT=1 ;;
+esac
+case $- in
+    *u*) __DEXPROJ_HAD_NOUNSET=1 ;;
+esac
+if set -o | grep -q '^pipefail[[:space:]]*on'; then
+    __DEXPROJ_HAD_PIPEFAIL=1
+fi
+
 set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
@@ -65,10 +78,10 @@ fi
 
 if [ -z "$ROS_WS_SETUP" ]; then
     for candidate in \
+        /workspace/DexProj/wuji-hand-teleop/install/setup.bash \
         /home/wuji/ros2_ws/install/setup.bash \
         /workspace/wuji_retargeting/install/setup.bash \
         /workspace/wuji-hand-teleop/install/setup.bash \
-        /workspace/DexProj/wuji-hand-teleop/install/setup.bash \
         /home/wuji/wuji-hand-teleop/install/setup.bash
     do
         if [ -f "$candidate" ]; then
@@ -99,3 +112,31 @@ else
 fi
 
 export DEXPROJ_ROOT="$ROOT_DIR"
+
+if [ "${DEXPROJ_USE_CONDA_ROS2:-1}" = "1" ] && [ -n "${CONDA_PREFIX:-}" ]; then
+    DEXPROJ_PYTHON_EXECUTABLE="$CONDA_PREFIX/bin/python"
+    DEXPROJ_ROS2_EXECUTABLE="$(type -P ros2 || true)"
+    export PYTHON_EXECUTABLE="$DEXPROJ_PYTHON_EXECUTABLE"
+    export AMENT_PYTHON_EXECUTABLE="$DEXPROJ_PYTHON_EXECUTABLE"
+
+    if [ -x "$DEXPROJ_PYTHON_EXECUTABLE" ] && [ -n "$DEXPROJ_ROS2_EXECUTABLE" ]; then
+        ros2() {
+            if [ "${1:-}" = "launch" ]; then
+                "$DEXPROJ_PYTHON_EXECUTABLE" "$DEXPROJ_ROS2_EXECUTABLE" "$@"
+            else
+                "$DEXPROJ_ROS2_EXECUTABLE" "$@"
+            fi
+        }
+    fi
+fi
+
+if [ "$__DEXPROJ_HAD_ERREXIT" -eq 0 ]; then
+    set +e
+fi
+if [ "$__DEXPROJ_HAD_NOUNSET" -eq 0 ]; then
+    set +u
+fi
+if [ "$__DEXPROJ_HAD_PIPEFAIL" -eq 0 ]; then
+    set +o pipefail
+fi
+unset __DEXPROJ_HAD_ERREXIT __DEXPROJ_HAD_NOUNSET __DEXPROJ_HAD_PIPEFAIL

@@ -86,12 +86,33 @@ if [ "$#" -eq 0 ]; then
     echo "[dexproj] Docker workspace is ready in '$CONTAINER_NAME:$CONTAINER_WORKDIR'."
     echo "[dexproj] Pass a command to run it in the container, for example:"
     echo "  scripts/ensure_docker_exec.sh scripts/bringup_teleop.sh --hand-only --skip-preflight"
+    echo "[dexproj] Or enter an interactive shell:"
+    echo "  scripts/ensure_docker_exec.sh --shell"
     exit 0
 fi
 
 docker_exec_args=(-i)
 if [ -t 0 ]; then
     docker_exec_args+=(-t)
+fi
+
+if [ "$1" = "--shell" ] || [ "$1" = "shell" ] || [ "$1" = "bash" ]; then
+    exec docker exec "${docker_exec_args[@]}" \
+        -w "$CONTAINER_WORKDIR" \
+        "$CONTAINER_NAME" \
+        bash
+fi
+
+if [ "$1" = "--" ]; then
+    shift
+    if [ "$#" -eq 0 ]; then
+        echo "[dexproj] -- requires a command to run inside the container." >&2
+        exit 2
+    fi
+    exec docker exec "${docker_exec_args[@]}" \
+        -w "$CONTAINER_WORKDIR" \
+        "$CONTAINER_NAME" \
+        "$@"
 fi
 
 exec docker exec "${docker_exec_args[@]}" \
