@@ -5,6 +5,5 @@ mode: dual
 enable_camera: false
 enable_rviz: false
 
-hand_input: manus
+hand_input: wuji_glove
 arm_input: tracker
-

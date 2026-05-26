@@ -228,7 +228,10 @@ class SessionRuntime:
                 "left": "/wuji_hand/left/joint_state",
                 "right": "/wuji_hand/right/joint_state",
             }
-            hand_action_topics = dict(hand_state_topics)
+            hand_action_topics = {
+                "left": "/wuji_hand/left/joint_command",
+                "right": "/wuji_hand/right/joint_command",
+            }
 
         return [
             JointCsvPairRecorder(
@@ -384,6 +387,7 @@ def _build_hand_processes(plan: dict) -> list[ManagedProcessSpec]:
             cmd.extend(["--device-name", device_name])
         if retarget_config:
             cmd.extend(["--config", retarget_config])
+        cmd.extend(["--ros-joint-state-topic", f"/wuji_hand/{side}/joint_state"])
         return cmd
 
     if mode in {"single_left", "single_right"}:

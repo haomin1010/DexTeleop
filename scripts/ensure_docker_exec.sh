@@ -17,20 +17,29 @@ prepare_container_workspace() {
 
 sync_wuji_sdk_params() {
     local host_params_dir="${WUJI_SDK_PARAMS_DIR:-$HOME/.wuji/sdk/params}"
+    local host_sdk_dir="${WUJI_SDK_DIR:-$(dirname "$host_params_dir")}"
+    local host_models_dir="${WUJI_SDK_MODELS_DIR:-$host_sdk_dir/models}"
     local primary_params_dir="${DEXPROJ_CONTAINER_WUJI_PARAMS_DIR:-/home/wuji/.wuji/sdk/params}"
-    local container_params_dirs=("$primary_params_dir" "/root/.wuji/sdk/params")
+    local primary_sdk_dir
+    primary_sdk_dir="$(dirname "$primary_params_dir")"
+    local container_sdk_dirs=("$primary_sdk_dir" "/root/.wuji/sdk")
 
     if [ ! -d "$host_params_dir" ]; then
         return
     fi
 
-    echo "[dexproj] syncing Wuji SDK calibration params into container '$CONTAINER_NAME'..." >&2
-    local container_params_dir
-    for container_params_dir in "${container_params_dirs[@]}"; do
-        docker exec -u root "$CONTAINER_NAME" mkdir -p "$container_params_dir"
-        docker cp "$host_params_dir/." "$CONTAINER_NAME:$container_params_dir"
+    echo "[dexproj] syncing Wuji SDK calibration params/models into container '$CONTAINER_NAME'..." >&2
+    local container_sdk_dir
+    for container_sdk_dir in "${container_sdk_dirs[@]}"; do
+        docker exec -u root "$CONTAINER_NAME" mkdir -p "$container_sdk_dir/params" "$container_sdk_dir/models"
+        docker cp "$host_params_dir/." "$CONTAINER_NAME:$container_sdk_dir/params"
+        if [ -d "$host_models_dir" ]; then
+            docker cp "$host_models_dir/." "$CONTAINER_NAME:$container_sdk_dir/models"
+        fi
         docker exec -u root "$CONTAINER_NAME" bash -lc \
-            "chown -R wuji:wuji $(printf '%q' "$container_params_dir") 2>/dev/null || true"
+            "find $(printf '%q' "$container_sdk_dir/params") -name '*.toml' -exec sed -i -E 's#^hand_model_path = \".*/([^/\"]+_hand\\.urdf)\"#hand_model_path = \"$(printf '%q' "$container_sdk_dir")/models/\\1\"#' {} +"
+        docker exec -u root "$CONTAINER_NAME" bash -lc \
+            "chown -R wuji:wuji $(printf '%q' "$container_sdk_dir") 2>/dev/null || true"
     done
 }
 
@@ -72,6 +81,13 @@ fi
 
 prepare_container_workspace
 sync_wuji_sdk_params
+
+if [ "$#" -eq 0 ]; then
+    echo "[dexproj] Docker workspace is ready in '$CONTAINER_NAME:$CONTAINER_WORKDIR'."
+    echo "[dexproj] Pass a command to run it in the container, for example:"
+    echo "  scripts/ensure_docker_exec.sh scripts/bringup_teleop.sh --hand-only --skip-preflight"
+    exit 0
+fi
 
 docker_exec_args=(-i)
 if [ -t 0 ]; then

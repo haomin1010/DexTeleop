@@ -11,6 +11,7 @@ except ImportError:  # pragma: no cover
     yaml = None
 
 VALID_HAND_MODES = {"single_left", "single_right", "dual"}
+VALID_HAND_BACKENDS = {"ros2", "teleop_real", "py"}
 
 
 @dataclass
@@ -25,6 +26,8 @@ class HandChannelConfig:
 @dataclass
 class HandTeleopConfig:
     mode: str
+    backend: str
+    auto_discover_glove_sn: bool
     left: HandChannelConfig | None
     right: HandChannelConfig | None
 
@@ -40,6 +43,9 @@ class HandTeleopConfig:
         mode = str(raw.get("mode", "dual"))
         if mode not in VALID_HAND_MODES:
             raise ValueError(f"Unsupported hand teleop mode: {mode}")
+        backend = str(raw.get("backend", "ros2"))
+        if backend not in VALID_HAND_BACKENDS:
+            raise ValueError(f"Unsupported hand teleop backend: {backend}")
 
         hands = raw.get("hands", {})
         if not isinstance(hands, dict):
@@ -57,7 +63,13 @@ class HandTeleopConfig:
                 retarget_config=str(section.get("retarget_config", "")),
             )
 
-        config = cls(mode=mode, left=_channel("left"), right=_channel("right"))
+        config = cls(
+            mode=mode,
+            backend="teleop_real" if backend == "py" else backend,
+            auto_discover_glove_sn=bool(raw.get("auto_discover_glove_sn", False)),
+            left=_channel("left"),
+            right=_channel("right"),
+        )
         config.validate()
         return config
 

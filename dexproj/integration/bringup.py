@@ -215,6 +215,8 @@ def main() -> int:
         config.enable_rviz = True
     if args.hand_only:
         config.enable_arm = False
+        if config.hand_input == "none":
+            config.hand_input = "wuji_glove"
 
     if config.enable_arm and not args.skip_preflight:
         preflight_report = collect_report(Path("config/htc_openvr_tracker.yaml").resolve())

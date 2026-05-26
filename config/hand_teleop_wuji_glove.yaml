@@ -1,4 +1,6 @@
 mode: dual
+backend: ros2
+auto_discover_glove_sn: true
 
 hands:
   left:

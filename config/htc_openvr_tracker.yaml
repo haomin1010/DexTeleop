@@ -1,11 +1,11 @@
 # DexProj local HTC tracker mapping.
 # Fill these values with your 5-tracker setup.
 tracker_serials:
-  chest: "LHR-XXXXXXXX"
-  right_wrist: "LHR-XXXXXXXX"
-  left_wrist: "LHR-XXXXXXXX"
-  left_arm: "LHR-XXXXXXXX"
-  right_arm: "LHR-XXXXXXXX"
+  chest: "LHR-B6A245CD"
+  right_wrist: "LHR-76F8EF35"
+  # left_wrist: "LHR-XXXXXXXX"
+  # left_arm: "LHR-XXXXXXXX"
+  right_arm: "LHR-4DC72746"
 
 # Wrist offset kept aligned with the current wuji-hand-teleop OpenVR config.
 wrist_offset: [0.0, -0.00275, 0.0535]
