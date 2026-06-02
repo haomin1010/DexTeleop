@@ -147,7 +147,7 @@ class ManagedProcessGroup:
         if path is None:
             return None
         path.parent.mkdir(parents=True, exist_ok=True)
-        return path.open("a", encoding="utf-8")
+        return path.open("w", encoding="utf-8")
 
     @staticmethod
     def _close_handle(handle: object | None) -> None:

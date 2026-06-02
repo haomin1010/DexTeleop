@@ -1,4 +1,4 @@
-mode: dual
+mode: single_right
 backend: ros2
 auto_discover_glove_sn: true
 

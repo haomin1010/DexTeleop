@@ -1,0 +1,47 @@
+# Sim baseline — user-reported motion sequence
+# Capture: tianji_sim_baseline_20260530_160010
+# Profile: read_only + TJ SDK IK + mapped_tf (gold standard)
+
+Session: 2026-05-30 16:00  Capture dir: /tmp/tianji_sim_baseline_20260530_160010
+Host copy: captures/tianji_sim_baseline_20260530_160010/
+
+User sequence (as performed):
+  small pitch -> large pitch -> small yaw -> large yaw -> small roll -> large roll
+(no second-terminal motion_stamp; times below from main.log TRACKER_ORI, approximate)
+
+0) Zero (Tracker zero initialized @ log t≈1780128016.786)
+   Expected: no 90° twist at start
+   Actual: OK — mapped_tf, right_success=True from first READ_ONLY_POSE
+
+1) Pitch — small
+   Log hint: t 8017–8023, blended_delta_deg mostly <4°
+   Actual: (fill subjective) RViz/MuJoCo followed tracker: ___
+
+2) Pitch — large
+   Log hint: t 8024–8029, deltas ~22–28° (8024 jump 22°)
+   Actual: ___
+
+3) Yaw — small
+   Log hint: t 8029–8030, delta ~3–28°
+   Actual: ___
+
+4) Yaw — large
+   Log hint: t 8031+, deltas 85–101° (8031–8038 very large wrist Z in raw)
+   Actual: ___
+
+5) Roll — small
+   Log hint: (mixed with large yaw in log; hard to isolate — see 8043–8050 ~82–92°)
+   Actual: ___
+
+6) Roll — large
+   Log hint: t 8056–8062, deltas 77–145°; ONE [RIGHT_IK_FAIL] @ 8040.354 (out_range)
+   Actual: large roll / fast motion; IK fail once during extreme pose — Y at step 6
+
+Summary (automated from main.log):
+  READ_ONLY_POSE: 46 ok / 0 fail
+  RIGHT_IK_FAIL: 1 (out_range, all joints exceed tags)
+  Marvin Set B cmd: 0
+  use pinocchio IK: False
+
+# Rosbag alignment: use topics/right_joint_command.csv + baseline bag;
+# correlate with log timestamps above if motion_stamp missing.

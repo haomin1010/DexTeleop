@@ -1,7 +1,7 @@
 # DexProj main bringup config.
 # This repository currently supports HTC/OpenVR as the only arm teleop route.
 
-mode: dual
+mode: single_right
 enable_camera: false
 enable_rviz: false
 

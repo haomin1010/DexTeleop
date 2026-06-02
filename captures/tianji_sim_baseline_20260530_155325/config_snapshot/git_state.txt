@@ -1,0 +1,78 @@
+3fa58481e971bf1588b57751ea44d99abe1d95b5
+## main...origin/main [behind 1]
+ M docker/Dockerfile
+ M docker/README.md
+ M docker/docker-compose.yml
+ M src/controller/controller/__init__.py
+ M src/controller/controller/tianji_arm_node.py
+ M src/controller/controller/wujihand_node.py
+ M src/controller/package.xml
+ M src/controller/setup.py
+ M src/input_devices/openvr_input/config/openvr_input.yaml
+ M src/input_devices/openvr_input/openvr_input/openvr_input_node.py
+ M src/input_devices/openvr_input/openvr_input/openvr_tracker_wrapper.py
+ M src/input_devices/openvr_input/rviz/openvr_visualization.rviz
+ M src/output_devices/tianji_output/tianji_output/_internal/fx_robot.py
+ M src/output_devices/tianji_output/tianji_output/config/tianji_output.yaml
+ M src/output_devices/tianji_output/tianji_output/tianji_arm_controller.py
+ M src/output_devices/tianji_world_output/config/tianji_robot.yaml
+ M src/output_devices/wujihand_output/config/wujihand_ik.yaml
+ M src/wuji_teleop_bringup/launch/wuji_teleop.launch.py
+ M src/wuji_teleop_bringup/launch/wuji_teleop_arm.launch.py
+ M src/wuji_teleop_bringup/launch/wuji_teleop_camera.launch.py
+ M src/wuji_teleop_bringup/launch/wuji_teleop_hand.launch.py
+ M src/wuji_teleop_bringup/launch/wuji_teleop_single.launch.py
+ M src/wuji_teleop_bringup/package.xml
+ M src/wuji_teleop_monitor/wuji_teleop_monitor/main_window.py
+?? src/controller/controller/one_euro_filter.py
+?? src/controller/controller/pinocchio_ik_solver.py
+?? src/controller/controller/rotation_utils.py
+?? src/controller/controller/tianji_arm_node.py.bak_sdk_align_20260528
+?? src/controller/controller/tianji_arm_node.py.bak_sdk_official_20260528
+?? src/controller/controller/tianji_joint_state_bridge_node.py
+?? src/controller/controller/tianji_mujoco_viewer_node.py
+?? src/controller/controller/tianji_tracker_sim_viz_node.py
+?? src/controller/controller/wujihand_direct_node.py
+?? src/input_devices/openvr_input/config/openvr_input.yaml.bak_sdk_align_20260528
+?? src/input_devices/wuji_glove_input_py/
+?? src/output_devices/tianji_output/tianji_output/config/tianji_output.yaml.bak_sdk_align_20260528
+?? src/output_devices/tianji_output/tianji_output/config/tianji_output.yaml.bak_sdk_official_20260528
+?? src/output_devices/tianji_output/tianji_output/config/tianji_output_real.yaml
+?? src/output_devices/tianji_output/tianji_output/config/tianji_output_real_full_pose.yaml
+?? src/output_devices/tianji_output/tianji_output/config/tianji_output_sim.yaml
+?? src/output_devices/tianji_output/tianji_output/sdk_ik_helper.py
+?? src/output_devices/tianji_output/tianji_output/sdk_isolated_ik.py
+?? src/output_devices/tianji_output/tianji_output/tianji_arm_controller.py.bak_sdk_align_20260528
+?? src/output_devices/wujihand_output/config/retarget_wuji_glove_left.yaml
+?? src/output_devices/wujihand_output/config/retarget_wuji_glove_right.yaml
+?? src/tianji_urdf/
+?? src/wuji_teleop_bringup/config/static_transforms_joint5_debug.yaml
+?? src/wujihandros2/
+612f97d16909d563e11c1f313973db96544f9259
+## ssh-167-backup...origin/ssh-167-backup
+ M config/bringup_htc.yaml
+ M config/hand_teleop_wuji_glove.yaml
+ M config/session_htc_wuji_glove.yaml
+ M dexproj/session/run_session.py
+ M dexproj/session/runtime_support.py
+ M scripts/activate_dexproj_env.sh
+ m wuji-hand-teleop
+ m wuji-retargeting
+?? scripts/analyze_tianji_baseline_log.sh
+?? scripts/analyze_tianji_orientation_log.sh
+?? scripts/calibrate_wrist_forearm_axes.py
+?? scripts/check_right_arm_coordinate_response.py
+?? scripts/compare_sim_real_baseline.md
+?? scripts/diagnose_right_arm_reach.py
+?? scripts/diagnose_tianji_right_arm.sh
+?? scripts/disable_tianji_right_arm.sh
+?? scripts/log_teleop_session.py
+?? scripts/log_wrist_frame_axes.py
+?? scripts/run_sdk_alignment_test.sh
+?? scripts/run_tianji_orientation_capture.sh
+?? scripts/run_tianji_orientation_capture_debug.sh
+?? scripts/run_tianji_orientation_capture_main.sh
+?? scripts/run_tianji_sim_baseline_capture.sh
+?? scripts/tianji_disable_arms.sh
+?? scripts/tianji_orientation_motion_template.txt
+?? scripts/tianji_sim_baseline_motion_template.txt

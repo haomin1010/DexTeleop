@@ -34,6 +34,14 @@ from dexproj.session.runtime_support import (
 VALID_TRIGGER_MODES = {"gamepad", "keyboard", "both"}
 VALID_RUNTIME_STATES = {"initialized", "ready", "running", "stopped"}
 VALID_SESSION_MODES = {"single_left", "single_right", "dual"}
+ARM_READY_SERVICE = "/tianji_arm/get_mode"
+ARM_SWITCH_MODE_SERVICE = "/tianji_arm/switch_mode"
+ARM_READY_TIMEOUT_SEC = 30.0
+ARM_LOG_FAILURE_MARKERS = (
+    "[ERROR] [tianji_arm_controller",
+    "ModuleNotFoundError:",
+    "ConnectionError:",
+)
 
 CAMERA_TOPIC_SPECS = [
     {"name": "head", "topic": "/cam_head/color/image_raw", "schema": "image"},
@@ -152,6 +160,7 @@ class SessionRuntime:
         if self.status_writer is not None:
             self.status_writer.stop()
         self.process_group.stop_all()
+        self._fallback_disable_tianji()
         for recorder in self.joint_writers:
             recorder.stop()
         for recorder in self.camera_writers:
@@ -167,6 +176,8 @@ class SessionRuntime:
                 self.status_writer.stop()
         with suppress(Exception):
             self.process_group.stop_all()
+        with suppress(Exception):
+            self._fallback_disable_tianji()
         for recorder in self.joint_writers:
             with suppress(Exception):
                 recorder.stop()
@@ -182,6 +193,26 @@ class SessionRuntime:
         self.plan["runtime_state"] = self.state
         self.plan.setdefault("runtime", {})["abort_reason"] = reason
         print(f"[session] aborted: {reason}")
+
+    def _fallback_disable_tianji(self) -> None:
+        if not self.plan.get("bringup", {}).get("enable_arm", False):
+            return
+        script = Path("scripts/tianji_disable_arms.sh").resolve()
+        if not script.exists():
+            print(f"[session] Tianji fallback disable script missing: {script}")
+            return
+        try:
+            completed = subprocess.run(
+                [str(script)],
+                cwd=Path(".").resolve(),
+                check=False,
+                timeout=8.0,
+            )
+        except subprocess.TimeoutExpired:
+            print("[session] Tianji fallback disable timed out")
+            return
+        if completed.returncode != 0:
+            print(f"[session] Tianji fallback disable exited {completed.returncode}")
 
     def _attach_writers(self, episode_dir: Path) -> None:
         runtime_dir = episode_dir / "_runtime"
@@ -430,6 +461,99 @@ def _start_processes(plan: dict, dry_run: bool) -> ManagedProcessGroup:
     return group
 
 
+def _wait_for_arm_ready(group: ManagedProcessGroup, timeout_sec: float = ARM_READY_TIMEOUT_SEC) -> None:
+    """Wait until the Tianji node has finished startup and exposed its services."""
+    deadline = time.monotonic() + timeout_sec
+    warned_failures: set[str] = set()
+    bringup_stdout_pos = 0
+    print(f"[session] waiting for Tianji arm ready service: {ARM_READY_SERVICE}")
+    while time.monotonic() < deadline:
+        bringup_stdout_path = None
+        for handle in group.handles:
+            if handle.spec.name == "bringup":
+                bringup_stdout_path = handle.spec.stdout_path
+            code = handle.process.poll()
+            if code is None or code == 0:
+                continue
+            failure = f"{handle.spec.name} exited with code {code}"
+            if handle.spec.name == "bringup":
+                raise RuntimeError(failure)
+            if failure not in warned_failures:
+                warned_failures.add(failure)
+                print(f"[session] warning: {failure}; continuing to wait for Tianji arm")
+
+        if bringup_stdout_path is not None:
+            try:
+                with bringup_stdout_path.open("r", encoding="utf-8", errors="replace") as log:
+                    log.seek(bringup_stdout_pos)
+                    chunk = log.read()
+                    bringup_stdout_pos = log.tell()
+            except OSError:
+                chunk = ""
+            if any(marker in chunk for marker in ARM_LOG_FAILURE_MARKERS):
+                raise RuntimeError(
+                    "tianji_arm_controller failed during bringup: "
+                    f"{_summarize_tianji_log_failure(chunk)}"
+                )
+
+        try:
+            completed = subprocess.run(
+                ["ros2", "service", "list"],
+                check=False,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=True,
+                timeout=2.0,
+            )
+        except (FileNotFoundError, subprocess.TimeoutExpired):
+            completed = None
+
+        if completed is not None and completed.returncode == 0:
+            services = {line.strip() for line in completed.stdout.splitlines()}
+            if ARM_READY_SERVICE in services:
+                print("[session] Tianji arm controller ready")
+                return
+
+        time.sleep(0.5)
+
+    raise TimeoutError(
+        f"Tianji arm controller did not expose {ARM_READY_SERVICE} "
+        f"within {timeout_sec:.0f}s"
+    )
+
+
+def _set_arm_teleop_enabled(enabled: bool) -> None:
+    # tianji_arm_node uses SetBool(True)=INFERENCE, SetBool(False)=TELEOP.
+    data = "false" if enabled else "true"
+    mode = "TELEOP" if enabled else "INFERENCE"
+    completed = subprocess.run(
+        [
+            "ros2",
+            "service",
+            "call",
+            ARM_SWITCH_MODE_SERVICE,
+            "std_srvs/srv/SetBool",
+            f"{{data: {data}}}",
+        ],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        timeout=5.0,
+    )
+    if completed.returncode != 0:
+        detail = (completed.stderr or completed.stdout).strip()
+        raise RuntimeError(f"failed to switch Tianji arm to {mode}: {detail}")
+    print(f"[session] Tianji arm mode -> {mode}")
+
+
+def _summarize_tianji_log_failure(chunk: str) -> str:
+    lines = [line.strip() for line in chunk.splitlines() if "tianji_arm_controller" in line or "Error:" in line]
+    if not lines:
+        return "see data/logs/bringup.stdout.log"
+    return " | ".join(lines[-4:])
+
+
 def _build_process_specs(plan: dict) -> list[ManagedProcessSpec]:
     logs_dir = Path("data").resolve() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -460,6 +584,7 @@ def _resolve_configs(config_path: Path) -> tuple[SessionConfig, BringupConfig, H
     bringup_cfg = BringupConfig.from_yaml(Path(session_cfg.bringup_config).expanduser().resolve())
     hand_cfg = HandTeleopConfig.from_yaml(Path(session_cfg.hand_teleop_config).expanduser().resolve())
     bringup_command = apply_hand_teleop_overrides(resolve_launch_command(bringup_cfg), hand_cfg, bringup_cfg.mode)
+    bringup_command.append(f"openvr_config:={Path(session_cfg.openvr_config).expanduser().resolve()}")
     return session_cfg, bringup_cfg, hand_cfg, bringup_command
 
 
@@ -488,7 +613,11 @@ def main() -> int:
         trigger = _build_trigger(session_cfg.trigger)
         start_trigger = trigger.wait_for_start()
         runtime.process_group = _start_processes(plan, dry_run=args.dry_run)
+        if plan.get("bringup", {}).get("enable_arm", False):
+            _wait_for_arm_ready(runtime.process_group)
         runtime.enter_running(start_trigger)
+        if plan.get("bringup", {}).get("enable_arm", False):
+            _set_arm_teleop_enabled(True)
         stop_trigger = trigger.wait_for_stop()
         runtime.enter_stopped(stop_trigger)
         return 0
