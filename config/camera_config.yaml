@@ -50,7 +50,7 @@ cameras:
       enable_pointcloud: false
       enable_gyro: false
       enable_accel: false
-    enable_auto_exposure: false
+    enable_auto_exposure: true
     exposure: 120
     gain: 16
     tf:
@@ -78,7 +78,7 @@ cameras:
       enable_pointcloud: false
       enable_gyro: false
       enable_accel: false
-    enable_auto_exposure: false
+    enable_auto_exposure: true
     exposure: 120
     gain: 16
     tf:

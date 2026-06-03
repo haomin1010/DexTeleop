@@ -287,6 +287,7 @@ class RosImageFrameRecorder:
     topic: str
     image_dir: Path
     frames_csv_path: Path
+    fallback_topics: list[str] = field(default_factory=list)
     schema: str = "image"
     reliability: str = "best_effort"
     _thread: threading.Thread | None = field(default=None, init=False)
@@ -296,6 +297,7 @@ class RosImageFrameRecorder:
     _frame_index: int = field(default=0, init=False)
     _csv_fp: object | None = field(default=None, init=False)
     _csv_writer: csv.writer | None = field(default=None, init=False)
+    _active_topic: str | None = field(default=None, init=False)
 
     def start(self) -> None:
         self.image_dir.mkdir(parents=True, exist_ok=True)
@@ -329,10 +331,27 @@ class RosImageFrameRecorder:
     def _subscribe(self) -> None:
         assert self._node is not None
         qos = self._image_qos()
-        if self.schema == "compressed_image":
-            self._node.create_subscription(CompressedImage, self.topic, self._compressed_cb, qos)
-        else:
-            self._node.create_subscription(Image, self.topic, self._image_cb, qos)
+        topics = [self.topic, *self.fallback_topics]
+        seen_topics: set[str] = set()
+        for topic in topics:
+            topic_name = str(topic).strip()
+            if not topic_name or topic_name in seen_topics:
+                continue
+            seen_topics.add(topic_name)
+            if self.schema == "compressed_image":
+                self._node.create_subscription(
+                    CompressedImage,
+                    topic_name,
+                    lambda msg, source_topic=topic_name: self._compressed_cb(msg, source_topic),
+                    qos,
+                )
+            else:
+                self._node.create_subscription(
+                    Image,
+                    topic_name,
+                    lambda msg, source_topic=topic_name: self._image_cb(msg, source_topic),
+                    qos,
+                )
 
     def _image_qos(self):
         if QoSProfile is None:
@@ -374,7 +393,15 @@ class RosImageFrameRecorder:
         if self._csv_fp is not None:
             self._csv_fp.flush()
 
-    def _image_cb(self, msg):
+    def _should_record_topic(self, source_topic: str) -> bool:
+        if self._active_topic is None:
+            self._active_topic = source_topic
+            return True
+        return self._active_topic == source_topic
+
+    def _image_cb(self, msg, source_topic: str):
+        if not self._should_record_topic(source_topic):
+            return
         timestamp_unix = time.time()
         width = int(getattr(msg, "width", 0) or 0)
         height = int(getattr(msg, "height", 0) or 0)
@@ -382,15 +409,17 @@ class RosImageFrameRecorder:
         suffix = self._image_suffix_for_encoding(encoding)
         image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}{suffix}"
         self._save_raw_image(image_path, msg, encoding, width, height)
-        self._write_frame_row(image_path, timestamp_unix, self.topic, encoding, width, height)
+        self._write_frame_row(image_path, timestamp_unix, source_topic, encoding, width, height)
 
-    def _compressed_cb(self, msg):
+    def _compressed_cb(self, msg, source_topic: str):
+        if not self._should_record_topic(source_topic):
+            return
         timestamp_unix = time.time()
         fmt = str(getattr(msg, "format", "") or "jpg")
         suffix = ".jpg" if "jpg" in fmt.lower() or "jpeg" in fmt.lower() else ".png"
         image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}{suffix}"
         image_path.write_bytes(bytes(getattr(msg, "data", b"") or b""))
-        self._write_frame_row(image_path, timestamp_unix, self.topic, "compressed", 0, 0, fmt)
+        self._write_frame_row(image_path, timestamp_unix, source_topic, "compressed", 0, 0, fmt)
 
     def _save_raw_image(self, image_path: Path, msg, encoding: str, width: int, height: int) -> None:
         data = bytes(getattr(msg, "data", b"") or b"")

@@ -52,9 +52,21 @@ ARM_LOG_FAILURE_MARKERS = (
 
 DEFAULT_CAMERA_TOPIC_SPECS = {
     "head_usb": {"name": "head", "topic": "/stereo/left/compressed", "schema": "compressed_image", "reliability": "best_effort"},
-    "head_realsense": {"name": "head", "topic": "/cam_head/color/image_raw/compressed", "schema": "compressed_image", "reliability": "reliable"},
-    "left_wrist": {"name": "left_wrist", "topic": "/cam_left_wrist/color/image_raw/compressed", "schema": "compressed_image", "reliability": "reliable"},
-    "right_wrist": {"name": "right_wrist", "topic": "/cam_right_wrist/color/image_raw/compressed", "schema": "compressed_image", "reliability": "reliable"},
+    "head_realsense": {"name": "head", "topic": "/cam_head/color/image_raw/compressed", "schema": "compressed_image", "reliability": "best_effort"},
+    "left_wrist": {
+        "name": "left_wrist",
+        "topic": "/cam_left_wrist/color/image_raw/compressed",
+        "fallback_topics": ["/cam_left_wrist/color/image_rect_raw/compressed"],
+        "schema": "compressed_image",
+        "reliability": "best_effort",
+    },
+    "right_wrist": {
+        "name": "right_wrist",
+        "topic": "/cam_right_wrist/color/image_raw/compressed",
+        "fallback_topics": ["/cam_right_wrist/color/image_rect_raw/compressed"],
+        "schema": "compressed_image",
+        "reliability": "best_effort",
+    },
 }
 
 
@@ -270,6 +282,7 @@ class SessionRuntime:
             recorder = RosImageFrameRecorder(
                 name=spec["name"],
                 topic=spec["topic"],
+                fallback_topics=list(spec.get("fallback_topics", [])),
                 image_dir=camera_dir / "images",
                 frames_csv_path=camera_dir / "frames.csv",
                 schema=spec["schema"],
