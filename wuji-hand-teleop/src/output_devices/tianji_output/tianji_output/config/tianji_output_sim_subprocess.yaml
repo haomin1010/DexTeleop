@@ -1,0 +1,155 @@
+# Sim test（回滚模式）：使用进程内 IK（不启用 IK 子进程隔离）
+#
+# 启动方式：
+#   ./scripts/run_tianji_sim_subprocess.sh
+# 或：
+#   controller_config:=.../tianji_output_sim_subprocess.yaml read_only:=true ...
+#
+# 日志检查：
+#   IK subprocess isolate: False
+#   不应出现 "IK subprocess worker started" 日志
+
+# --- Robot connection（机器人连接） ---
+robot_ip: "192.168.8.166" # 机器人控制器 IP 地址
+dry_run: false # 是否仅演练不连接机器人（true 时不真实下发）
+read_only: false # 只读模式：只读状态不发送运动命令
+feedback_handshake: false # 只读模式下是否做反馈握手以启动状态流
+read_only_connect_timeout: 3.0 # 只读连接超时时间（秒）
+
+# --- IK backend switch（IK 后端开关） ---
+use_pinocchio_ik: true # 是否启用 Pinocchio IK（false 时走 SDK IK）
+
+# --- Pinocchio model and frame alignment（Pinocchio 模型与坐标帧） ---
+pinocchio_urdf_path: "" # Pinocchio URDF 路径（空则走默认）
+pinocchio_right_ee_frame: "Link7_R" # 右臂末端帧名
+pinocchio_left_ee_frame: "Link7_R" # 左臂末端帧名
+ik_frame_scan_debug: false # 是否开启 IK 坐标帧扫描调试日志
+motor_unit: "deg" # 电机角单位（deg/rad）
+
+# --- Pinocchio joint-axis constraint switch（关节轴约束开关） ---
+# 参数名历史沿用 j2，但实际约束关节由 joint_index 决定。
+pinocchio_j2_axis_constraint_enable: true # 是否启用关节轴约束
+pinocchio_j2_axis_constraint_hard: true # 是否硬约束（true=锁定，false=软约束）
+pinocchio_j2_axis_constraint_weight: 0.8 # 软约束权重（硬约束模式基本不生效）
+pinocchio_j2_axis_constraint_gain: 1.0 # 约束增益（可用于方向翻转）
+pinocchio_j2_axis_constraint_joint_index: 1 # 约束目标关节索引（0 基，6=J7）
+pinocchio_j2_axis_constraint_max_delta_deg: 10.0 # 约束角相对零位最大偏移（度）
+pinocchio_j2_axis_constraint_max_step_deg: 6.0 # 约束角每周期最大变化（度）
+
+# --- Legacy SDK IK subprocess switch（SDK IK 子进程开关） ---
+ik_subprocess_isolate: false # 是否启用 SDK IK 子进程隔离
+# libKine 子进程初始化可能较慢，不建议过小超时
+ik_subprocess_timeout_sec: 3.0 # 单次 IK 子进程调用超时（秒）
+ik_subprocess_ready_timeout_sec: 45.0 # 子进程就绪超时（秒）
+# 持久子进程下可承载频率有限，通常不要设过高
+ik_subprocess_max_rate_hz: 25.0 # SDK IK 子进程最大调用频率（Hz）
+ik_subprocess_max_branch_delta_deg: 25.0 # 子进程分支切换允许的最大角差（度）
+
+# --- Tracker position mapping（Tracker 位置映射） ---
+tracker_mode: "incremental" # Tracker 位姿模式（incremental/absolute）
+tracker_position_scale: 1.0 # Tracker 位置总缩放
+tracker_position_scale_x: 1.0 # X 轴位置缩放系数
+tracker_position_scale_y: 0.8 # Y 轴位置缩放系数
+tracker_position_scale_z: 0.8 # Z 轴位置缩放系数
+tracker_position_limit_m: 0.0 # Tracker 位移球形限幅（米，0 表示关闭）
+tracker_position_max_x_m: 1.5 # 位置 X 轴上限（米）
+tracker_position_min_y_m: -0.7 # 位置 Y 轴下限（米）
+tracker_position_max_y_m: 0.7 # 位置 Y 轴上限（米）
+tracker_position_min_z_m: -0.5 # 位置 Z 轴下限（米）
+tracker_position_max_z_m: 0.7 # 位置 Z 轴上限（米）
+control_rate_hz: 100.0 # 控制循环频率（Hz）
+
+# --- Tracker orientation source switch（姿态输入源开关） ---
+tracker_orientation_input_mode: "mapped_tf" # 姿态输入模式（mapped_tf/raw_wrist）
+tracker_orientation_source_frame_right: "right_wrist" # 右侧姿态输入 TF 帧
+tracker_orientation_source_frame_left: "left_wrist" # 左侧姿态输入 TF 帧
+
+# --- Tracker orientation map switch（姿态映射开关） ---
+tracker_orientation_map_mode: "matrix" # 姿态映射方式（identity/matrix）
+tracker_orientation_map_matrix: # 姿态映射矩阵（3x3）
+  - [-0.08234819, 0.98106012, 0.17532772] # 映射矩阵第 1 行
+  - [-0.98504047, -0.10684454, 0.13520175] # 映射矩阵第 2 行
+  - [0.15137385, -0.16157129, 0.97518238] # 映射矩阵第 3 行
+
+# --- Tracker orientation control（姿态控制参数） ---
+tracker_orientation_mode: "full_pose" # 姿态控制模式（如 full_pose）
+ik_reference_mode: "last_success" # IK 参考关节来源（last_success 等）
+tracker_orientation_filter_alpha: 0.5 # 姿态低通滤波系数
+tracker_orientation_max_step_deg: 12.0 # 姿态每周期最大步长（度）
+tracker_orientation_blend: 1.0 # 姿态融合权重（0~1）
+tracker_orientation_debug: true # 是否输出姿态调试日志
+
+# --- Wrist-local switch（腕部局部控制开关） ---
+tracker_wrist_local_enable: false # 是否启用 wrist-local 模式
+tracker_wrist_local_hold_position: false # wrist-local 下是否保持位置
+tracker_wrist_local_hold_position_mode: "last_target" # 保持位置策略（last_target/robot_zero）
+tracker_wrist_local_debug: false # 是否输出 wrist-local 调试日志
+tracker_wrist_local_pos_threshold_m: 0.025 # wrist-local 位置阈值（米）
+tracker_wrist_local_rot_threshold_deg: 5.0 # wrist-local 旋转阈值（度）
+
+# --- Wrist-local position blend switch（腕部局部位置融合开关） ---
+tracker_wrist_local_position_blend_enable: false # 是否启用 wrist-local 位置权重融合
+tracker_wrist_local_weight_filter_alpha: 0.85 # wrist-local 权重滤波系数
+tracker_wrist_local_pos_start_m: 0.015 # 位置融合开始阈值（米）
+tracker_wrist_local_pos_full_m: 0.055 # 位置融合满权阈值（米）
+tracker_wrist_local_rot_start_deg: 3.0 # 旋转融合开始阈值（度）
+tracker_wrist_local_rot_full_deg: 12.0 # 旋转融合满权阈值（度）
+
+# --- Workspace clamps（工作空间约束） ---
+workspace_min_x_m: -0.20 # 工作空间 X 下限（米）
+workspace_max_x_m: 0.75 # 工作空间 X 上限（米）
+workspace_min_y_m: -0.45 # 工作空间 Y 下限（米）
+workspace_max_y_m: 0.45 # 工作空间 Y 上限（米）
+workspace_min_z_m: -0.7 # 工作空间 Z 下限（米）
+workspace_max_z_m: 0.70 # 工作空间 Z 上限（米）
+workspace_min_radius_m: 0.22 # 工作空间半径下限（米）
+workspace_max_radius_m: 0.80 # 工作空间半径上限（米）
+
+# --- Pinocchio IK solver（Pinocchio IK 求解器） ---
+ik_max_iters: 30 # IK 最大迭代次数
+ik_dt: 0.5 # IK 积分步长系数
+ik_pos_eps_m: 0.4 # 位置误差收敛阈值（米）
+ik_ori_eps_rad: 0.08 # 姿态误差收敛阈值（弧度）
+ik_position_weight: 0.9 # 位置项权重
+ik_orientation_weight: 0.5 # 姿态项权重
+ik_orientation_weight_near_singularity: 0.01 # 奇异附近姿态权重
+ik_base_damping: 1e-4 # 基础阻尼
+ik_max_damping: 5e-2 # 最大阻尼
+ik_max_dq_step_deg: 15.0 # 单次迭代关节最大步长（度）
+
+# --- Singularity thresholds（奇异性阈值） ---
+singularity_sigma_min_warn: 0.04 # 最小奇异值告警阈值
+singularity_sigma_min_critical: 0.015 # 最小奇异值严重阈值
+singularity_condition_warn: 80.0 # 条件数告警阈值
+singularity_condition_critical: 200.0 # 条件数严重阈值
+
+# --- Output joint command limiter（输出关节命令限幅） ---
+max_joint_step_deg: 10 # 控制周期内最终下发关节命令最大步长（度）
+
+# --- Wrist orientation decomposition（腕部姿态分解） ---
+wrist_orientation_scale: 0.5 # 腕部姿态总缩放
+wrist_orientation_scale_x: 1.0 # 腕部姿态 X 分量缩放
+wrist_orientation_scale_y: 1.0 # 腕部姿态 Y 分量缩放
+wrist_orientation_scale_z: 1.0 # 腕部姿态 Z 分量缩放
+wrist_orientation_axis_order: "zxy" # 腕部姿态轴顺序
+wrist_orientation_decompose: "rotvec" # 腕部姿态分解方式（rotvec/euler）
+wrist_orientation_axis_basis: # rotvec 到自定义轴基的变换矩阵
+  x: [-0.08234819, -0.98504047, 0.15137385] # 自定义基 X 轴
+  y: [0.98106012, -0.10684454, -0.16157129] # 自定义基 Y 轴
+  z: [0.17532772, 0.13520175, 0.97518238] # 自定义基 Z 轴
+wrist_orientation_max_deg: 35.0 # 腕部姿态分量最大限幅（度）
+tracker_start_delay_sec: 0.0 # Tracker 启动后控制延迟（秒）
+
+# --- Keyboard teleop gate switch（键盘门控开关） ---
+# 回滚到基线启动流程：仿真中不使用 B/E 门控。
+keyboard_teleop_gate: false # 是否启用键盘开始/停止门控
+keyboard_start_key: B # 键盘启动键
+keyboard_stop_key: E # 键盘停止键
+keyboard_start_align_sec: 3.0 # 启动对齐持续时间（秒）
+keyboard_align_max_ik_delta_deg: 20.0 # 启动对齐允许最大 IK 角差（度）
+teleop_ik_max_step_deg: 10.0 # Teleop 阶段 IK 最大步长（度）
+keyboard_zero_warmup_cycles: 0 # 键盘启动前零位预热周期数
+teleop_ik_grace_cycles: 0 # Teleop 切换后的 IK 宽限周期数
+init_move_sides: right # 初始化移动侧别（left/right/both）
+init_move_duration_sec: 3.0 # 初始化移动持续时间（秒）
+teleop_active_sides: right # Teleop 生效侧别（left/right/both）
