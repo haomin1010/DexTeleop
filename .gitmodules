@@ -1,6 +1,0 @@
-[submodule "wuji-hand-teleop"]
-	path = wuji-hand-teleop
-	url = https://github.com/wuji-technology/wuji-hand-teleop.git
-[submodule "wuji-retargeting"]
-	path = wuji-retargeting
-	url = https://github.com/wuji-technology/wuji-retargeting.git
