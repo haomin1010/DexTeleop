@@ -1,4 +1,4 @@
-mode: dual
+mode: single_right
 backend: ros2
 auto_discover_glove_sn: true
 
@@ -11,6 +11,6 @@ hands:
 
   right:
     glove_sn: "WG1KA02260409009"
-    hand_sn: "384E365C3533"
+    hand_sn: "3860364D3533"
     glove_device_name: "glove_right"
     retarget_config: "wuji-retargeting/example/config/adaptive_analytical_wuji_glove_right.yaml"

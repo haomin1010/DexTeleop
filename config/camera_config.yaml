@@ -5,7 +5,8 @@ global:
 cameras:
   head:
     enabled: true
-    type: usb
+    type: d435i
+    serial_number: 254322070127
     video_device: /dev/stereo_camera
     pixel_format: mjpeg2rgb
     io_method: mmap
@@ -21,6 +22,9 @@ cameras:
       enable_pointcloud: false
       enable_gyro: false
       enable_accel: false
+    enable_auto_exposure: false
+    exposure: 120
+    gain: 16
     tf:
       parent_frame: base_link
       child_frame: cam_head_link
@@ -30,7 +34,7 @@ cameras:
   left_wrist:
     enabled: true
     type: d405
-    serial_number: LEFT_WRIST_REALSENSE_SN
+    serial_number: 260522272600
     video_device: /dev/cam_left_wrist
     pixel_format: mjpeg2rgb
     io_method: mmap
@@ -46,6 +50,9 @@ cameras:
       enable_pointcloud: false
       enable_gyro: false
       enable_accel: false
+    enable_auto_exposure: false
+    exposure: 120
+    gain: 16
     tf:
       parent_frame: left_wrist_link
       child_frame: cam_left_wrist_link
@@ -55,7 +62,7 @@ cameras:
   right_wrist:
     enabled: true
     type: d405
-    serial_number: RIGHT_WRIST_REALSENSE_SN
+    serial_number: 260522279497
     video_device: /dev/cam_right_wrist
     pixel_format: mjpeg2rgb
     io_method: mmap
@@ -71,6 +78,9 @@ cameras:
       enable_pointcloud: false
       enable_gyro: false
       enable_accel: false
+    enable_auto_exposure: false
+    exposure: 120
+    gain: 16
     tf:
       parent_frame: right_wrist_link
       child_frame: cam_right_wrist_link

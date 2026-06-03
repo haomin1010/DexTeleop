@@ -1,0 +1,45 @@
+# Sim baseline motion script (fill while capture runs)
+# Save as: <capture_dir>/motion_notes.txt
+#
+# Default sequence (rotation axis isolation, small then large):
+#   pitch small -> pitch large -> yaw small -> yaw large -> roll small -> roll large
+# Optional: add step 0 zero_hold, step 7 fast_sweep
+
+Session: ___________  Capture dir: /tmp/tianji_sim_baseline___________
+
+For each step: hold ~3s steady at neutral, then move ~5–8s. Note RViz/MuJoCo vs tracker.
+
+0) Zero / T-pose (after "Tracker zero initialized")
+   Expected: no 90° twist; arm matches tracker at start
+   Actual:
+
+1) Pitch — small (nod wrist slightly)
+   Expected: TCP pitch changes a little; roll/yaw stable
+   Actual:
+
+2) Pitch — large
+   Expected: clear pitch; still no 90° axis swap vs tracker
+   Actual:
+
+3) Yaw — small
+   Actual:
+
+4) Yaw — large
+   Actual:
+
+5) Roll — small (forearm twist)
+   Actual:
+
+6) Roll — large
+   Expected: smooth; note any [RIGHT_IK_FAIL] during this step: Y/N
+   Actual:
+
+7) (optional) Fast sweep / combined reach
+   Actual:
+
+# Second terminal stamps (recommended):
+#   ./scripts/tianji_motion_stamp.sh wuji22-hand:<capture_dir> 1 pitch_small
+#   ... through 6 roll_large
+
+# After capture:
+#   ./scripts/analyze_tianji_baseline_log.sh captures/.../main.log

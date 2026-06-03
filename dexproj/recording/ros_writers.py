@@ -288,6 +288,7 @@ class RosImageFrameRecorder:
     image_dir: Path
     frames_csv_path: Path
     schema: str = "image"
+    reliability: str = "best_effort"
     _thread: threading.Thread | None = field(default=None, init=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
     _node: Node | None = field(default=None, init=False)
@@ -327,10 +328,23 @@ class RosImageFrameRecorder:
 
     def _subscribe(self) -> None:
         assert self._node is not None
+        qos = self._image_qos()
         if self.schema == "compressed_image":
-            self._node.create_subscription(CompressedImage, self.topic, self._compressed_cb, 10)
+            self._node.create_subscription(CompressedImage, self.topic, self._compressed_cb, qos)
         else:
-            self._node.create_subscription(Image, self.topic, self._image_cb, 10)
+            self._node.create_subscription(Image, self.topic, self._image_cb, qos)
+
+    def _image_qos(self):
+        if QoSProfile is None:
+            return 10
+        reliability = ReliabilityPolicy.BEST_EFFORT
+        if str(self.reliability).lower() == "reliable":
+            reliability = ReliabilityPolicy.RELIABLE
+        return QoSProfile(
+            reliability=reliability,
+            history=HistoryPolicy.KEEP_LAST,
+            depth=10,
+        )
 
     def _spin(self) -> None:
         assert self._executor is not None
@@ -365,7 +379,8 @@ class RosImageFrameRecorder:
         width = int(getattr(msg, "width", 0) or 0)
         height = int(getattr(msg, "height", 0) or 0)
         encoding = str(getattr(msg, "encoding", "") or "")
-        image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}.ppm"
+        suffix = self._image_suffix_for_encoding(encoding)
+        image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}{suffix}"
         self._save_raw_image(image_path, msg, encoding, width, height)
         self._write_frame_row(image_path, timestamp_unix, self.topic, encoding, width, height)
 
@@ -381,22 +396,45 @@ class RosImageFrameRecorder:
         data = bytes(getattr(msg, "data", b"") or b"")
         if encoding in {"rgb8", "bgr8"} and width > 0 and height > 0:
             array = np.frombuffer(data, dtype=np.uint8).reshape(height, width, 3)
-            if encoding == "bgr8":
-                array = array[:, :, ::-1]
-            self._write_ppm(image_path, array)
+            self._write_jpeg(image_path, array, encoding)
             return
         if encoding == "mono8" and width > 0 and height > 0:
             array = np.frombuffer(data, dtype=np.uint8).reshape(height, width)
-            self._write_pgm(image_path, array)
+            self._write_png_gray(image_path, array)
             return
         image_path.write_bytes(data)
 
     @staticmethod
-    def _write_ppm(path: Path, array: np.ndarray) -> None:
-        header = f"P6\n{array.shape[1]} {array.shape[0]}\n255\n".encode("ascii")
-        path.write_bytes(header + array.astype(np.uint8).tobytes())
+    def _image_suffix_for_encoding(encoding: str) -> str:
+        if encoding in {"rgb8", "bgr8", "mono8"}:
+            return ".jpg"
+        return ".bin"
 
     @staticmethod
-    def _write_pgm(path: Path, array: np.ndarray) -> None:
-        header = f"P5\n{array.shape[1]} {array.shape[0]}\n255\n".encode("ascii")
-        path.write_bytes(header + array.astype(np.uint8).tobytes())
+    def _write_jpeg(path: Path, array: np.ndarray, encoding: str) -> None:
+        try:
+            import cv2  # type: ignore
+        except ImportError:
+            if encoding == "bgr8":
+                array = array[:, :, ::-1]
+            header = f"P6\n{array.shape[1]} {array.shape[0]}\n255\n".encode("ascii")
+            path.with_suffix(".ppm").write_bytes(header + array.astype(np.uint8).tobytes())
+            return
+        encode_input = array if encoding == "bgr8" else array[:, :, ::-1]
+        ok, encoded = cv2.imencode(".jpg", encode_input, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            raise RuntimeError(f"failed to encode JPEG: {path}")
+        path.write_bytes(encoded.tobytes())
+
+    @staticmethod
+    def _write_png_gray(path: Path, array: np.ndarray) -> None:
+        try:
+            import cv2  # type: ignore
+        except ImportError:
+            header = f"P5\n{array.shape[1]} {array.shape[0]}\n255\n".encode("ascii")
+            path.with_suffix(".pgm").write_bytes(header + array.astype(np.uint8).tobytes())
+            return
+        ok, encoded = cv2.imencode(".jpg", array, [int(cv2.IMWRITE_JPEG_QUALITY), 95])
+        if not ok:
+            raise RuntimeError(f"failed to encode grayscale JPEG: {path}")
+        path.write_bytes(encoded.tobytes())

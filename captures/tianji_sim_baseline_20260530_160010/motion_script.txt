@@ -1,0 +1,36 @@
+# Sim baseline motion script (fill while capture runs)
+# Save as: <capture_dir>/motion_notes.txt
+
+Session: _20260530_160010  Capture dir: /tmp/tianji_sim_baseline_20260530_160010
+
+For each step: hold ~5s steady, then move ~5s. Note RViz arm vs tracker feel.
+
+1) Zero / T-pose at startup
+   Expected: arm matches tracker, no 90° twist on right
+   Actual:
+
+2) Right wrist translation only (no rotation)
+   Move: +X, -X, +Y, -Y, +Z, -Z in chest frame (small motions)
+   Expected: MuJoCo/RViz TCP follows position; orientation stable
+   Actual:
+
+3) Roll only (rotate wrist around forearm axis)
+   Expected: smooth roll, no sudden lock
+   Actual:
+
+4) Pitch only
+   Actual:
+
+5) Yaw only
+   Actual:
+
+6) Combined reach forward + up
+   Actual:
+
+7) Fast sweep (stress IK)
+   Note any [RIGHT_IK_FAIL] in main.log during this step: Y/N
+   Actual:
+
+# After capture, on host:
+#   ./scripts/analyze_tianji_baseline_log.sh captures/.../main.log
+# Compare CSV: topics/right_joint_command.csv vs real robot joint_command later

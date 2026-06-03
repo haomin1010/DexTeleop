@@ -22,6 +22,7 @@ CONDA_SH="${DEXPROJ_CONDA_SH:-}"
 # under `set -u` if they are unset.
 export AMENT_TRACE_SETUP_FILES="${AMENT_TRACE_SETUP_FILES-}"
 export COLCON_TRACE="${COLCON_TRACE-}"
+export COLCON_PYTHON_EXECUTABLE="${COLCON_PYTHON_EXECUTABLE-}"
 
 source_compat() {
     local had_u=0
@@ -78,8 +79,9 @@ fi
 
 if [ -z "$ROS_WS_SETUP" ]; then
     for candidate in \
-        /workspace/DexProj/wuji-hand-teleop/install/setup.bash \
         /home/wuji/ros2_ws/install/setup.bash \
+        /home/wuji/DexProj/wuji-hand-teleop/install/setup.bash \
+        /workspace/DexProj/wuji-hand-teleop/install/setup.bash \
         /workspace/wuji_retargeting/install/setup.bash \
         /workspace/wuji-hand-teleop/install/setup.bash \
         /home/wuji/wuji-hand-teleop/install/setup.bash
