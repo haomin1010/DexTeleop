@@ -37,7 +37,7 @@ tracker_position_min_y_m: -0.7
 tracker_position_max_y_m: 0.7
 tracker_position_min_z_m: -0.05
 tracker_position_max_z_m: 0.7
-control_rate_hz: 100.0
+control_rate_hz: 1000.0
 
 tracker_orientation_input_mode: "mapped_tf"
 tracker_orientation_source_frame_right: "right_wrist"

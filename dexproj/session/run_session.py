@@ -24,7 +24,7 @@ except ImportError:  # pragma: no cover
 from dexproj.check_devices.cli import collect_report, evaluate_report
 from dexproj.hand_teleop.config import HandChannelConfig, HandTeleopConfig
 from dexproj.integration.bringup import BringupConfig
-from dexproj.recording.ros_writers import JointCsvPairRecorder, RosImageFrameRecorder
+from dexproj.recording.ros_writers import FloatArrayCsvPairRecorder, JointCsvPairRecorder, RosImageFrameRecorder
 from dexproj.recording.session_recorder import SessionRecorder
 from dexproj.recording.tj_raw import TJRawEpisodeWriter
 from dexproj.session.runtime_support import (
@@ -334,6 +334,26 @@ class SessionRuntime:
                     "left": [f"left_joint_{index}.pos" for index in range(1, 8)],
                     "right": [f"right_joint_{index}.pos" for index in range(1, 8)],
                 },
+                freeze_missing_sides=True,
+            ),
+            FloatArrayCsvPairRecorder(
+                name="arm_ee_pose",
+                state_topics={
+                    "left": "/tianji_arm/left/left_ee_pose",
+                    "right": "/tianji_arm/right/right_ee_pose",
+                },
+                action_topics={
+                    "left": "/tianji_arm/left/left_ee_pose",
+                    "right": "/tianji_arm/right/right_ee_pose",
+                },
+                timestamp_path=episode_dir / "arm_data" / "ee_pose_timestamp.csv",
+                observation_path=episode_dir / "arm_data" / "ee_pose_observation_state.csv",
+                action_path=episode_dir / "arm_data" / "ee_pose_action.csv",
+                columns_by_side={
+                    "left": [f"left_ee_pose_{name}" for name in ("x", "y", "z", "a", "b", "c")],
+                    "right": [f"right_ee_pose_{name}" for name in ("x", "y", "z", "a", "b", "c")],
+                },
+                freeze_missing_sides=True,
             ),
             JointCsvPairRecorder(
                 name="hand",
@@ -346,6 +366,7 @@ class SessionRuntime:
                     "left": [f"left_finger{finger}_joint{joint}" for finger in range(1, 6) for joint in range(1, 5)],
                     "right": [f"right_finger{finger}_joint{joint}" for finger in range(1, 6) for joint in range(1, 5)],
                 },
+                freeze_missing_sides=True,
             ),
         ]
 
@@ -516,11 +537,9 @@ def _build_hand_processes(plan: dict) -> list[ManagedProcessSpec]:
         str(Path(hand_cfg_path).expanduser().resolve()),
         "--hand-only",
         "--skip-preflight",
+        "--mode",
+        mode,
     ]
-    if mode == "single_left":
-        command.extend(["--mode", "single_left"])
-    elif mode == "single_right":
-        command.extend(["--mode", "single_right"])
 
     return [
         ManagedProcessSpec(

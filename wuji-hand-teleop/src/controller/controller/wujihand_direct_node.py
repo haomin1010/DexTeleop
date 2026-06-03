@@ -53,7 +53,7 @@ except ImportError as exc:  # pragma: no cover - hardware runtime dependency
 from ament_index_python.packages import get_package_share_directory
 
 
-CONTROL_RATE_HZ = 100.0
+CONTROL_RATE_HZ = 1000.0
 
 JOINT_NAMES = [
     "thumb_joint_0", "thumb_joint_1", "thumb_joint_2", "thumb_joint_3",

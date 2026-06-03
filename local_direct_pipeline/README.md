@@ -50,6 +50,13 @@ RAW_ROOT=/home/user/workspace/DexProj_back_up_0602/data/raw/session_2026_06_03 \
 bash local_direct_pipeline/convert_raw2lerobot.sh
 ```
 
+If you want to build without ee pose:
+
+```bash
+RAW_ROOT=/home/user/workspace/DexProj_back_up_0602/data/raw/session_2026_06_03 \
+bash local_direct_pipeline/convert_raw2lerobot.sh --exclude-ee-pose
+```
+
 Build locally, then upload:
 
 ```bash

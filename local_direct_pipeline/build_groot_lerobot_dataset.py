@@ -29,6 +29,7 @@ class CameraSpec:
     fps: float
     width: int
     height: int
+    timestamps: list[float]
 
 
 @dataclass(frozen=True)
@@ -150,6 +151,26 @@ def _read_frame_rows(frames_csv: Path) -> list[dict[str, str]]:
         return list(csv.DictReader(handle))
 
 
+def _read_camera_timestamps(frames_csv: Path) -> list[float]:
+    frame_rows = _read_frame_rows(frames_csv)
+    if not frame_rows:
+        return []
+
+    timestamps: list[float] = []
+    for row in frame_rows:
+        raw_value = (
+            row.get("wall_time_unix")
+            or row.get("timestamp_unix")
+            or row.get("recv_wall")
+            or ""
+        )
+        raw_value = str(raw_value).strip()
+        if not raw_value:
+            raise RuntimeError(f"Camera frame row is missing a supported timestamp field: {frames_csv}")
+        timestamps.append(float(raw_value))
+    return timestamps
+
+
 def _image_shape(path: Path) -> tuple[int, int]:
     try:
         import cv2
@@ -265,6 +286,9 @@ def _ensure_camera_video(camera_dir: Path, fps: float) -> CameraSpec | None:
     frame_rows = _read_frame_rows(frames_csv)
     if not frame_rows:
         return None
+    timestamps = _read_camera_timestamps(frames_csv)
+    if len(timestamps) != len(frame_rows):
+        raise RuntimeError(f"Camera frame/timestamp length mismatch: {frames_csv}")
 
     image_paths = [_resolve_image_path(row.get("image_path", ""), camera_dir) for row in frame_rows]
     video_path = camera_dir / "camera.mp4"
@@ -273,10 +297,24 @@ def _ensure_camera_video(camera_dir: Path, fps: float) -> CameraSpec | None:
     if video_path.is_file():
         if width <= 0 or height <= 0:
             width, height = _image_shape(image_paths[0])
-        return CameraSpec(name=camera_dir.name, path=video_path, fps=fps, width=width, height=height)
+        return CameraSpec(
+            name=camera_dir.name,
+            path=video_path,
+            fps=fps,
+            width=width,
+            height=height,
+            timestamps=timestamps,
+        )
 
     width, height = _write_video_from_images(image_paths, video_path, fps)
-    return CameraSpec(name=camera_dir.name, path=video_path, fps=fps, width=width, height=height)
+    return CameraSpec(
+        name=camera_dir.name,
+        path=video_path,
+        fps=fps,
+        width=width,
+        height=height,
+        timestamps=timestamps,
+    )
 
 
 def _group_name(column_name: str, modality: str) -> str:
@@ -404,16 +442,21 @@ def _summarize_relative_horizon_groups(groups: list[list[np.ndarray]]) -> dict[s
     return summary
 
 
-def episode_is_complete(episode_dir: Path, default_task: str = "") -> tuple[bool, str]:
+def episode_is_complete(episode_dir: Path, default_task: str = "", include_ee_pose: bool = True) -> tuple[bool, str]:
     required_paths = [
         episode_dir / "meta.json",
         episode_dir / "arm_data" / "timestamp.csv",
         episode_dir / "arm_data" / "observation_state.csv",
         episode_dir / "arm_data" / "action.csv",
-        episode_dir / "arm_data" / "ee_pose_timestamp.csv",
-        episode_dir / "arm_data" / "ee_pose_observation_state.csv",
-        episode_dir / "arm_data" / "ee_pose_action.csv",
     ]
+    if include_ee_pose:
+        required_paths.extend(
+            [
+                episode_dir / "arm_data" / "ee_pose_timestamp.csv",
+                episode_dir / "arm_data" / "ee_pose_observation_state.csv",
+                episode_dir / "arm_data" / "ee_pose_action.csv",
+            ]
+        )
     for required_path in required_paths:
         if not required_path.exists():
             return False, f"missing required file: {required_path}"
@@ -455,6 +498,10 @@ def _discover_camera_specs(episode_dir: Path, meta: dict, sample_info: dict) -> 
         video_path = episode_dir / "camera_data" / camera_name / "camera.mp4"
         if not video_path.is_file():
             continue
+        frames_csv = episode_dir / "camera_data" / camera_name / "frames.csv"
+        timestamps = _read_camera_timestamps(frames_csv)
+        if not timestamps:
+            continue
         camera_specs.append(
             CameraSpec(
                 name=camera_name,
@@ -462,6 +509,7 @@ def _discover_camera_specs(episode_dir: Path, meta: dict, sample_info: dict) -> 
                 fps=float(recorder.get("camera_fps", 0.0) or 0.0),
                 width=int(recorder.get("camera_width", 0) or 0),
                 height=int(recorder.get("camera_height", 0) or 0),
+                timestamps=timestamps,
             )
         )
     if camera_specs:
@@ -482,8 +530,18 @@ def _discover_camera_specs(episode_dir: Path, meta: dict, sample_info: dict) -> 
     return sorted(camera_specs, key=lambda item: item.name)
 
 
-def load_episode(episode_dir: Path, target_hz: float, default_task: str = "") -> EpisodeData:
-    is_complete, reason = episode_is_complete(episode_dir, default_task=default_task)
+def _primary_camera_sort_key(spec: CameraSpec) -> tuple[int, str]:
+    preferred_order = {"head": 0, "left_wrist": 1, "right_wrist": 2}
+    return preferred_order.get(spec.name, len(preferred_order)), spec.name
+
+
+def load_episode(
+    episode_dir: Path,
+    target_hz: float,
+    default_task: str = "",
+    include_ee_pose: bool = True,
+) -> EpisodeData:
+    is_complete, reason = episode_is_complete(episode_dir, default_task=default_task, include_ee_pose=include_ee_pose)
     if not is_complete:
         raise ValueError(f"Episode {episode_dir} is not complete: {reason}")
 
@@ -496,12 +554,20 @@ def load_episode(episode_dir: Path, target_hz: float, default_task: str = "") ->
     episode_timestamps = _read_timestamp_csv(arm_dir / "timestamp.csv")
     arm_state_names, arm_state_rows = _read_numeric_csv(arm_dir / "observation_state.csv")
     arm_action_names, arm_action_rows = _read_numeric_csv(arm_dir / "action.csv")
-    arm_ee_pose_state_names, arm_ee_pose_times, arm_ee_pose_state_rows = _read_timestamped_numeric_csv(
-        arm_dir / "ee_pose_timestamp.csv", arm_dir / "ee_pose_observation_state.csv"
-    )
-    arm_ee_pose_action_names, arm_ee_pose_action_times, arm_ee_pose_action_rows = _read_timestamped_numeric_csv(
-        arm_dir / "ee_pose_timestamp.csv", arm_dir / "ee_pose_action.csv"
-    )
+    if include_ee_pose:
+        arm_ee_pose_state_names, arm_ee_pose_times, arm_ee_pose_state_rows = _read_timestamped_numeric_csv(
+            arm_dir / "ee_pose_timestamp.csv", arm_dir / "ee_pose_observation_state.csv"
+        )
+        arm_ee_pose_action_names, arm_ee_pose_action_times, arm_ee_pose_action_rows = _read_timestamped_numeric_csv(
+            arm_dir / "ee_pose_timestamp.csv", arm_dir / "ee_pose_action.csv"
+        )
+    else:
+        arm_ee_pose_state_names = []
+        arm_ee_pose_times = []
+        arm_ee_pose_state_rows = []
+        arm_ee_pose_action_names = []
+        arm_ee_pose_action_times = []
+        arm_ee_pose_action_rows = []
     if (hand_dir / "timestamp.csv").is_file():
         hand_actual_names, hand_actual_times, hand_actual_rows = _read_timestamped_numeric_csv(
             hand_dir / "timestamp.csv", hand_dir / "observation_state.csv"
@@ -518,28 +584,42 @@ def load_episode(episode_dir: Path, target_hz: float, default_task: str = "") ->
     if not (len(episode_timestamps) == len(arm_state_rows) == len(arm_action_rows)):
         raise RuntimeError(f"Episode {episode_dir.name} timestamp/state/action lengths do not match")
 
-    keep_indices = _downsample_indices_by_time(episode_timestamps, target_hz)
-    episode_timestamps = [episode_timestamps[index] for index in keep_indices]
-    arm_state_rows = [arm_state_rows[index] for index in keep_indices]
-    arm_action_rows = [arm_action_rows[index] for index in keep_indices]
+    camera_specs = _discover_camera_specs(episode_dir, meta, sample_info)
+    if not camera_specs:
+        raise RuntimeError(f"Episode {episode_dir.name} has no camera frames available for image-aligned conversion")
+
+    primary_camera = min(camera_specs, key=_primary_camera_sort_key)
+    sample_timestamps = list(primary_camera.timestamps)
+    if not sample_timestamps:
+        raise RuntimeError(f"Episode {episode_dir.name} primary camera {primary_camera.name} has no timestamps")
+
+    keep_indices = _downsample_indices_by_time(sample_timestamps, target_hz)
+    sample_timestamps = [sample_timestamps[index] for index in keep_indices]
 
     observation_rows: list[list[float]] = []
     action_rows: list[list[float]] = []
     rel_timestamps: list[float] = []
-    start_time = episode_timestamps[0]
-    for idx, timestamp in enumerate(episode_timestamps):
-        arm_ee_pose_state_idx = _nearest_index(arm_ee_pose_times, timestamp)
-        arm_ee_pose_action_idx = _nearest_index(arm_ee_pose_action_times, timestamp)
+    start_time = sample_timestamps[0]
+    for timestamp in sample_timestamps:
+        arm_state_idx = _nearest_index(episode_timestamps, timestamp)
+        arm_action_idx = arm_state_idx
         hand_actual_idx = _nearest_index(hand_actual_times, timestamp)
         hand_target_idx = _nearest_index(hand_target_times, timestamp)
+        ee_pose_state = []
+        ee_pose_action = []
+        if include_ee_pose:
+            arm_ee_pose_state_idx = _nearest_index(arm_ee_pose_times, timestamp)
+            arm_ee_pose_action_idx = _nearest_index(arm_ee_pose_action_times, timestamp)
+            ee_pose_state = list(arm_ee_pose_state_rows[arm_ee_pose_state_idx])
+            ee_pose_action = list(arm_ee_pose_action_rows[arm_ee_pose_action_idx])
         observation_row = (
-            list(arm_state_rows[idx])
-            + list(arm_ee_pose_state_rows[arm_ee_pose_state_idx])
+            list(arm_state_rows[arm_state_idx])
+            + ee_pose_state
             + list(hand_actual_rows[hand_actual_idx])
         )
         action_row = (
-            list(arm_action_rows[idx])
-            + list(arm_ee_pose_action_rows[arm_ee_pose_action_idx])
+            list(arm_action_rows[arm_action_idx])
+            + ee_pose_action
             + list(hand_target_rows[hand_target_idx])
         )
         if not (_finite_row(observation_row) and _finite_row(action_row)):
@@ -563,7 +643,7 @@ def load_episode(episode_dir: Path, target_hz: float, default_task: str = "") ->
         observation_rows=observation_rows,
         action_rows=action_rows,
         rel_timestamps=rel_timestamps,
-        camera_specs=_discover_camera_specs(episode_dir, meta, sample_info),
+        camera_specs=camera_specs,
     )
 
 
@@ -620,6 +700,7 @@ def build_dataset(
     overwrite_output: bool,
     batch_manifest: dict | None = None,
     default_task: str = "",
+    include_ee_pose: bool = True,
 ) -> dict[str, object]:
     import pyarrow as pa
     import pyarrow.parquet as pq
@@ -636,7 +717,7 @@ def build_dataset(
         shutil.rmtree(output_dir)
 
     episodes_data = [
-        load_episode(episode_dir, target_hz, default_task=default_task)
+        load_episode(episode_dir, target_hz, default_task=default_task, include_ee_pose=include_ee_pose)
         for episode_dir in episode_dirs
     ]
     first_episode = episodes_data[0]
@@ -965,6 +1046,11 @@ def main() -> None:
         default="",
         help="Task description used when an episode meta.json does not contain a task.",
     )
+    parser.add_argument(
+        "--exclude-ee-pose",
+        action="store_true",
+        help="Build the dataset without ee_pose features.",
+    )
     args = parser.parse_args()
 
     batch_manifest = None
@@ -984,6 +1070,7 @@ def main() -> None:
         overwrite_output=bool(args.overwrite_output),
         batch_manifest=batch_manifest,
         default_task=str(args.default_task),
+        include_ee_pose=not bool(args.exclude_ee_pose),
     )
     print(json.dumps(summary, indent=2, ensure_ascii=False))
 

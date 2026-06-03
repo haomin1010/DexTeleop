@@ -17,17 +17,17 @@ ik_frame_scan_debug: false
 motor_unit: "deg"
 
 tracker_mode: "incremental"
-tracker_position_scale: 0.9
+tracker_position_scale: 1.0
 tracker_position_scale_x: 1.0
-tracker_position_scale_y: 0.8
-tracker_position_scale_z: 0.8
+tracker_position_scale_y: 1.0
+tracker_position_scale_z: 1.0
 tracker_position_limit_m: 0.0
 tracker_position_max_x_m: 1.5
-tracker_position_min_y_m: -0.7
-tracker_position_max_y_m: 0.7
-tracker_position_min_z_m: -0.65
-tracker_position_max_z_m: 0.7
-control_rate_hz: 100.0
+tracker_position_min_y_m: -0.9
+tracker_position_max_y_m: 0.9
+tracker_position_min_z_m: -0.9
+tracker_position_max_z_m: 0.9
+control_rate_hz: 1000.0
 
 tracker_orientation_input_mode: "mapped_tf"
 tracker_orientation_source_frame_right: "right_wrist"
@@ -60,12 +60,12 @@ tracker_wrist_local_pos_full_m: 0.055
 tracker_wrist_local_rot_start_deg: 3.0
 tracker_wrist_local_rot_full_deg: 12.0
 
-workspace_min_x_m: 0.20
-workspace_max_x_m: 0.75
+workspace_min_x_m: 0.0
+workspace_max_x_m: 0.9
 workspace_min_y_m: -0.45
 workspace_max_y_m: 0.45
-workspace_min_z_m: -0.65
-workspace_max_z_m: 0.70
+workspace_min_z_m: -0.9
+workspace_max_z_m: 0.9
 workspace_min_radius_m: 0.22
 workspace_max_radius_m: 0.80
 
