@@ -26,6 +26,7 @@ from dexproj.check_devices.cli import collect_report, evaluate_report
 from dexproj.hand_teleop.config import HandTeleopConfig
 
 VALID_MODES = {"single_left", "single_right", "dual"}
+REPO_ROOT = Path(__file__).resolve().parents[2]
 
 
 @dataclass
@@ -65,6 +66,23 @@ class BringupConfig:
             arm_sdk_executor_enable=bool(raw.get("arm_sdk_executor_enable", False)),
             arm_sim_viz=bool(raw.get("arm_sim_viz", False)),
         )
+
+
+def _resolve_repo_path(raw_path: str) -> str:
+    path_text = str(raw_path or "").strip()
+    if not path_text:
+        return ""
+
+    container_prefix = "/workspace/DexProj/"
+    if path_text.startswith(container_prefix):
+        mapped = (REPO_ROOT / path_text[len(container_prefix):]).resolve()
+        if mapped.exists():
+            return str(mapped)
+
+    path = Path(path_text).expanduser()
+    if path.is_absolute():
+        return str(path)
+    return str((REPO_ROOT / path).resolve())
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -178,7 +196,8 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
         extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
         if launch_file == "wuji_teleop_single.launch.py":
             if config.arm_controller_config:
-                extra_args.append(f"controller_config:={config.arm_controller_config}")
+                controller_config = _resolve_repo_path(config.arm_controller_config)
+                extra_args.append(f"controller_config:={controller_config}")
             extra_args.extend(
                 [
                     f"dry_run:={'true' if config.arm_dry_run else 'false'}",

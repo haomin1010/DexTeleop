@@ -1,5 +1,9 @@
 # 环境与执行
 
+如果你现在的目标是“Ubuntu 22.04 新机器、完全不用 Docker”，优先看这份专门文档：
+
+- [UBUNTU22_NATIVE_DEPLOYMENT.md](/home/user/workspace/DexProj_back_up_0602/docs/UBUNTU22_NATIVE_DEPLOYMENT.md)
+
 ## 1. 环境准备
 
 DexProj 运行时通常需要两层环境：
