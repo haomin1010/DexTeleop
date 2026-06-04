@@ -54,14 +54,14 @@ DEFAULT_CAMERA_TOPIC_SPECS = {
     "head_usb": {"name": "head", "topic": "/stereo/left/compressed", "schema": "compressed_image", "reliability": "best_effort"},
     "head_realsense": {"name": "head", "topic": "/cam_head/color/image_raw/compressed", "schema": "compressed_image", "reliability": "best_effort"},
     "left_wrist": {
-        "name": "left_wrist",
+        "name": "right_wrist",
         "topic": "/cam_left_wrist/color/image_raw/compressed",
         "fallback_topics": ["/cam_left_wrist/color/image_rect_raw/compressed"],
         "schema": "compressed_image",
         "reliability": "best_effort",
     },
     "right_wrist": {
-        "name": "right_wrist",
+        "name": "left_wrist",
         "topic": "/cam_right_wrist/color/image_raw/compressed",
         "fallback_topics": ["/cam_right_wrist/color/image_rect_raw/compressed"],
         "schema": "compressed_image",
@@ -189,6 +189,7 @@ class SessionRuntime:
         if self.status_writer is not None:
             self.status_writer.stop()
             self.status_writer = None
+        self._write_camera_diagnostics(self.active_episode_dir)
         for recorder in self.joint_writers:
             recorder.stop()
         self.joint_writers = []
@@ -377,7 +378,30 @@ class SessionRuntime:
             "recording": self.plan.get("recording", {}),
             "bringup": self.plan.get("bringup", {}),
             "trigger": self.plan.get("trigger", {}),
+            "processes": self.process_group.snapshot(),
+            "cameras": [recorder.snapshot() for recorder in self.camera_writers],
         }
+
+    def _write_camera_diagnostics(self, episode_dir: Path) -> None:
+        diagnostics = {
+            "generated_at_unix": time.time(),
+            "processes": self.process_group.snapshot(),
+            "cameras": [recorder.snapshot() for recorder in self.camera_writers],
+        }
+        output_path = episode_dir / "_runtime" / "camera_recording_diagnostics.json"
+        output_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+
+        missing = [
+            camera["name"]
+            for camera in diagnostics["cameras"]
+            if int(camera.get("frame_count", 0) or 0) <= 0
+        ]
+        if missing:
+            print(
+                "[session] warning: no camera frames recorded for "
+                + ", ".join(str(name) for name in missing)
+                + f" (see {output_path})"
+            )
 
 
 def _load_camera_config_dict(camera_config_path: str) -> dict:
@@ -419,6 +443,7 @@ def _resolve_camera_topic_specs(plan: dict) -> list[dict]:
 def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DexProj unified session runner.")
     parser.add_argument("--config", default="config/session_htc_wuji_glove.yaml", help="Session config file.")
+    parser.add_argument("--task", default="", help="Task name written into each recorded episode meta.json.")
     parser.add_argument("--dry-run", action="store_true", help="Print resolved commands without executing.")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip device preflight checks.")
     return parser
@@ -440,6 +465,7 @@ def _load_plan(
     bringup_command: list[str],
     hand_cfg: HandTeleopConfig,
     bringup_cfg: BringupConfig,
+    task: str = "",
 ) -> dict:
     if config.mode not in VALID_SESSION_MODES:
         raise ValueError(f"Unsupported session mode: {config.mode}")
@@ -457,6 +483,7 @@ def _load_plan(
 
     return {
         "mode": config.mode,
+        "task": str(task).strip(),
         "bringup": {
             "config": config.bringup_config,
             "command": bringup_command,
@@ -820,7 +847,7 @@ def main() -> int:
             print("[preflight] Use `python3 -m dexproj.check_devices` for details.")
             return 2
 
-    plan = _load_plan(session_cfg, bringup_command, hand_cfg, bringup_cfg)
+    plan = _load_plan(session_cfg, bringup_command, hand_cfg, bringup_cfg, task=args.task)
     if args.dry_run:
         _print_dry_run(plan)
         return 0

@@ -4,6 +4,7 @@ import argparse
 import bisect
 import csv
 import json
+import sys
 import shutil
 import subprocess
 import tempfile
@@ -45,6 +46,7 @@ class EpisodeData:
     hand_target_names: list[str]
     observation_rows: list[list[float]]
     action_rows: list[list[float]]
+    sample_timestamps: list[float]
     rel_timestamps: list[float]
     camera_specs: list[CameraSpec]
 
@@ -171,6 +173,29 @@ def _read_camera_timestamps(frames_csv: Path) -> list[float]:
     return timestamps
 
 
+def _read_camera_frame_paths(camera_dir: Path) -> tuple[list[float], list[Path]]:
+    frames_csv = camera_dir / "frames.csv"
+    frame_rows = _read_frame_rows(frames_csv)
+    if not frame_rows:
+        return [], []
+
+    timestamps: list[float] = []
+    image_paths: list[Path] = []
+    for row in frame_rows:
+        raw_value = (
+            row.get("wall_time_unix")
+            or row.get("timestamp_unix")
+            or row.get("recv_wall")
+            or ""
+        )
+        raw_value = str(raw_value).strip()
+        if not raw_value:
+            raise RuntimeError(f"Camera frame row is missing a supported timestamp field: {frames_csv}")
+        timestamps.append(float(raw_value))
+        image_paths.append(_resolve_image_path(row.get("image_path", ""), camera_dir))
+    return timestamps, image_paths
+
+
 def _image_shape(path: Path) -> tuple[int, int]:
     try:
         import cv2
@@ -279,6 +304,18 @@ def _write_video_from_images(image_paths: list[Path], output_path: Path, fps: fl
         return width, height
     except ImportError as exc:
         raise RuntimeError("OpenCV or imageio is required to create camera.mp4 from images.") from exc
+
+
+def _write_aligned_camera_video(camera: CameraSpec, output_path: Path, sample_timestamps: list[float]) -> tuple[int, int]:
+    if not sample_timestamps:
+        raise RuntimeError(f"No sample timestamps available for aligned video: {camera.name}")
+    camera_dir = camera.path.parent
+    frame_timestamps, image_paths = _read_camera_frame_paths(camera_dir)
+    if not frame_timestamps or not image_paths:
+        raise RuntimeError(f"Camera {camera.name} has no frame rows available under {camera_dir}")
+    selected_image_paths = [image_paths[_nearest_index(frame_timestamps, timestamp)] for timestamp in sample_timestamps]
+    fps = float(camera.fps) if camera.fps > 0.0 else DEFAULT_CAMERA_FPS
+    return _write_video_from_images(selected_image_paths, output_path, fps)
 
 
 def _ensure_camera_video(camera_dir: Path, fps: float) -> CameraSpec | None:
@@ -589,10 +626,40 @@ def load_episode(
         raise RuntimeError(f"Episode {episode_dir.name} has no camera frames available for image-aligned conversion")
 
     primary_camera = min(camera_specs, key=_primary_camera_sort_key)
-    sample_timestamps = list(primary_camera.timestamps)
-    if not sample_timestamps:
+    primary_timestamps = list(primary_camera.timestamps)
+    if not primary_timestamps:
         raise RuntimeError(f"Episode {episode_dir.name} primary camera {primary_camera.name} has no timestamps")
 
+    all_start_times = [
+        episode_timestamps[0],
+        hand_actual_times[0],
+        hand_target_times[0],
+        *[camera.timestamps[0] for camera in camera_specs if camera.timestamps],
+    ]
+    all_end_times = [
+        episode_timestamps[-1],
+        hand_actual_times[-1],
+        hand_target_times[-1],
+        *[camera.timestamps[-1] for camera in camera_specs if camera.timestamps],
+    ]
+    if include_ee_pose:
+        all_start_times.extend([arm_ee_pose_times[0], arm_ee_pose_action_times[0]])
+        all_end_times.extend([arm_ee_pose_times[-1], arm_ee_pose_action_times[-1]])
+    overlap_start = max(all_start_times)
+    overlap_end = min(all_end_times)
+    if overlap_start > overlap_end:
+        raise RuntimeError(
+            f"Episode {episode_dir.name} has no overlapping timestamp range across action/state/image streams"
+        )
+
+    sample_timestamps = [
+        timestamp for timestamp in primary_timestamps
+        if overlap_start <= timestamp <= overlap_end
+    ]
+    if not sample_timestamps:
+        raise RuntimeError(
+            f"Episode {episode_dir.name} primary camera {primary_camera.name} has no frames in common overlap window"
+        )
     keep_indices = _downsample_indices_by_time(sample_timestamps, target_hz)
     sample_timestamps = [sample_timestamps[index] for index in keep_indices]
 
@@ -642,6 +709,7 @@ def load_episode(
         hand_target_names=hand_target_names,
         observation_rows=observation_rows,
         action_rows=action_rows,
+        sample_timestamps=sample_timestamps,
         rel_timestamps=rel_timestamps,
         camera_specs=camera_specs,
     )
@@ -716,10 +784,22 @@ def build_dataset(
             )
         shutil.rmtree(output_dir)
 
-    episodes_data = [
-        load_episode(episode_dir, target_hz, default_task=default_task, include_ee_pose=include_ee_pose)
-        for episode_dir in episode_dirs
-    ]
+    episodes_data: list[EpisodeData] = []
+    total_episode_dirs = len(episode_dirs)
+    for offset, episode_dir in enumerate(episode_dirs):
+        print(
+            f"[build_groot_lerobot_dataset] loading {offset + 1}/{total_episode_dirs}: {episode_dir.name}",
+            file=sys.stderr,
+            flush=True,
+        )
+        episodes_data.append(
+            load_episode(episode_dir, target_hz, default_task=default_task, include_ee_pose=include_ee_pose)
+        )
+    print(
+        f"[build_groot_lerobot_dataset] loaded {len(episodes_data)} episodes from {episode_dirs[0].parent}",
+        file=sys.stderr,
+        flush=True,
+    )
     first_episode = episodes_data[0]
     observation_names = (
         list(first_episode.arm_state_names)
@@ -791,6 +871,12 @@ def build_dataset(
     }
 
     for offset, episode in enumerate(episodes_data):
+        print(
+            f"[build_groot_lerobot_dataset] processing {offset + 1}/{len(episodes_data)}: "
+            f"{episode.episode_name} ({len(episode.rel_timestamps)} samples, {len(episode.camera_specs)} cameras)",
+            file=sys.stderr,
+            flush=True,
+        )
         dataset_episode_index = offset
         chunk_index = dataset_episode_index // chunks_size
         chunk_dir = output_dir / "data" / f"chunk-{chunk_index:03d}"
@@ -855,7 +941,7 @@ def build_dataset(
                 / f"{episode_stem}.mp4"
             )
             target_path.parent.mkdir(parents=True, exist_ok=True)
-            shutil.copy2(camera.path, target_path)
+            _write_aligned_camera_video(camera, target_path, episode.sample_timestamps)
             total_videos += 1
 
         all_action_arrays.append(action_array)

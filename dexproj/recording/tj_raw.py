@@ -72,6 +72,7 @@ class TJRawEpisodeWriter:
             (camera_dir / "images").mkdir(parents=True, exist_ok=True)
 
     def start(self, plan: dict) -> None:
+        task = str(plan.get("task", "") or "").strip()
         sample_info = {
             "session_dir": str(self.paths.episode_dir.parent),
             "episode_index": int(self.paths.episode_dir.name.split("_")[-1]),
@@ -117,7 +118,7 @@ class TJRawEpisodeWriter:
                 "right_joint_7.pos",
             ],
             "num_frames": 0,
-            "task": "",
+            "task": task,
             "with_gripper_data": False,
         }
         self.paths.runtime_sample_info_json.write_text(json.dumps(sample_info, ensure_ascii=False, indent=2), encoding="utf-8")

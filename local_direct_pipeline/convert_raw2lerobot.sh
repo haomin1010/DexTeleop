@@ -29,6 +29,15 @@ for arg in "$@"; do
   esac
 done
 
+echo "[local_direct_pipeline] RAW_ROOT=${RAW_ROOT}" >&2
+echo "[local_direct_pipeline] OUTPUT_ROOT=${OUTPUT_ROOT}" >&2
+echo "[local_direct_pipeline] BUILD_PYTHON=${BUILD_PYTHON}" >&2
+echo "[local_direct_pipeline] TARGET_HZ=${TARGET_HZ}" >&2
+echo "[local_direct_pipeline] CHUNKS_SIZE=${CHUNKS_SIZE}" >&2
+echo "[local_direct_pipeline] ROBOT_TYPE=${ROBOT_TYPE}" >&2
+echo "[local_direct_pipeline] DEFAULT_TASK=${DEFAULT_TASK}" >&2
+echo "[local_direct_pipeline] EXTRA_ARGS=${FORWARD_ARGS[*]:-<none>}" >&2
+
 "${BUILD_PYTHON}" "${PROJECT_ROOT}/local_direct_pipeline/build_groot_lerobot_dataset.py" \
   --source-dir "${RAW_ROOT}" \
   --output-dir "${OUTPUT_ROOT}" \

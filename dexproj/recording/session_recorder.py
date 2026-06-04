@@ -56,6 +56,7 @@ class SessionRecorder:
 
         self.meta = {
             "mode": self.session_mode,
+            "task": str(plan.get("task", "") or "").strip(),
             "session_name": self.session_name,
             "episode_name": episode_name,
             "episode_index": episode_index,

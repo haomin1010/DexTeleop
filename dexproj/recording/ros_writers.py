@@ -547,8 +547,11 @@ class RosImageFrameRecorder:
     _csv_fp: object | None = field(default=None, init=False)
     _csv_writer: csv.writer | None = field(default=None, init=False)
     _active_topic: str | None = field(default=None, init=False)
+    _started_unix: float | None = field(default=None, init=False)
+    _last_frame_unix: float | None = field(default=None, init=False)
 
     def start(self) -> None:
+        self._started_unix = time.time()
         self.image_dir.mkdir(parents=True, exist_ok=True)
         self.frames_csv_path.parent.mkdir(parents=True, exist_ok=True)
         self._csv_fp = self.frames_csv_path.open("w", newline="", encoding="utf-8")
@@ -628,6 +631,7 @@ class RosImageFrameRecorder:
     def _write_frame_row(self, image_path: Path, timestamp_unix: float, topic: str, encoding: str, width: int, height: int, fmt: str = "") -> None:
         assert self._csv_writer is not None
         self._frame_index += 1
+        self._last_frame_unix = timestamp_unix
         self._csv_writer.writerow([
             self._frame_index,
             f"{timestamp_unix:.9f}",
@@ -641,6 +645,26 @@ class RosImageFrameRecorder:
         ])
         if self._csv_fp is not None:
             self._csv_fp.flush()
+
+    def snapshot(self) -> dict[str, object]:
+        now = time.time()
+        started_unix = self._started_unix
+        last_frame_unix = self._last_frame_unix
+        return {
+            "name": self.name,
+            "configured_topic": self.topic,
+            "fallback_topics": list(self.fallback_topics),
+            "active_topic": self._active_topic,
+            "frame_count": self._frame_index,
+            "started_unix": started_unix,
+            "last_frame_unix": last_frame_unix,
+            "seconds_since_start": None if started_unix is None else round(now - started_unix, 3),
+            "seconds_since_last_frame": None if last_frame_unix is None else round(now - last_frame_unix, 3),
+            "frames_csv_path": str(self.frames_csv_path),
+            "image_dir": str(self.image_dir),
+            "schema": self.schema,
+            "reliability": self.reliability,
+        }
 
     def _should_record_topic(self, source_topic: str) -> bool:
         if self._active_topic is None:
