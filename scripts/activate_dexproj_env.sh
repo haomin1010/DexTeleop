@@ -67,6 +67,7 @@ configure_rmw_implementation() {
 
 if [ -z "$CONDA_SH" ]; then
     for candidate in \
+        "$HOME/miniconda3/etc/profile.d/conda.sh" \
         /home/wuji/miniconda3/etc/profile.d/conda.sh \
         /opt/miniconda3/etc/profile.d/conda.sh
     do
@@ -79,6 +80,8 @@ fi
 
 if [ -z "$ROS_WS_SETUP" ]; then
     for candidate in \
+        "$HOME/ros2_ws/install/setup.bash" \
+        "$ROOT_DIR/wuji-hand-teleop/install/setup.bash" \
         /home/wuji/ros2_ws/install/setup.bash \
         /home/wuji/DexProj/wuji-hand-teleop/install/setup.bash \
         /workspace/DexProj/wuji-hand-teleop/install/setup.bash \

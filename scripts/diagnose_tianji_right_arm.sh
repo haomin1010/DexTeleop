@@ -3,7 +3,7 @@ set -euo pipefail
 
 MODE="${1:-read}"
 COUNT="${2:-50}"
-ROBOT_IP="${TIANJI_ROBOT_IP:-192.168.8.166}"
+ROBOT_IP="${TIANJI_ROBOT_IP:-192.168.2.166}"
 
 cd /home/user/workspace/DexProj
 

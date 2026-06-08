@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-ROBOT_IP="${TIANJI_ROBOT_IP:-192.168.8.166}"
+ROBOT_IP="${TIANJI_ROBOT_IP:-192.168.2.166}"
 
 if [[ -f /workspace/DexProj/scripts/activate_dexproj_env.sh ]]; then
     source /workspace/DexProj/scripts/activate_dexproj_env.sh

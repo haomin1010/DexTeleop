@@ -22,12 +22,12 @@ SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{idVendor}=="2b03", ATTRS{produ
 # 左手腕相机: RealSense (D405/D435) → /dev/cam_left_wrist
 # -----------------------------------------------------------------------------
 # 通过序列号匹配，D405↔D435 更换无需改规则，只需更新序列号
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{serial}=="260623070957", SYMLINK+="cam_left_wrist", MODE="0666"
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{serial}=="260623070007", SYMLINK+="cam_left_wrist", MODE="0666"
 
 # -----------------------------------------------------------------------------
 # 右手腕相机: RealSense (D405/D435) → /dev/cam_right_wrist
 # -----------------------------------------------------------------------------
-SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{serial}=="260623071710", SYMLINK+="cam_right_wrist", MODE="0666"
+SUBSYSTEM=="video4linux", ATTR{index}=="0", ATTRS{serial}=="261123074318", SYMLINK+="cam_right_wrist", MODE="0666"
 
 # =============================================================================
 # 更换相机时:

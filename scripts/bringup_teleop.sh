@@ -210,7 +210,7 @@ is_hand_only "$@"
 resolve_hand_teleop_config "$@"
 resolve_hand_backend "$@"
 
-if [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
+if [ "${DEXPROJ_USE_DOCKER:-0}" = "1" ] && [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
     if [ "$hand_only" -eq 1 ] && [ "$hand_backend" = "teleop_real" ]; then
         if [ "$hand_only_docker" != "1" ]; then
             run_teleop_real "$@"
@@ -218,7 +218,7 @@ if [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
     fi
 fi
 
-if [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
+if [ "${DEXPROJ_USE_DOCKER:-0}" = "1" ] && [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
     exec "$ROOT_DIR/scripts/ensure_docker_exec.sh" "scripts/bringup_teleop.sh" "$@"
 fi
 

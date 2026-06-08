@@ -6,7 +6,7 @@
 #
 # Flow: init right arm 3s -> press B (tracker zero + 3s align to first IK) -> teleop -> E stop
 
-robot_ip: "192.168.8.166"
+robot_ip: "192.168.2.166"
 
 dry_run: false
 read_only: false

@@ -4,7 +4,7 @@ global:
 
 cameras:
   head:
-    enabled: true
+    enabled: false
     type: d435i
     serial_number: 254322070127
     video_device: /dev/stereo_camera
@@ -34,7 +34,7 @@ cameras:
   left_wrist:
     enabled: true
     type: d405
-    serial_number: 260522272600
+    serial_number: 260522279586
     video_device: /dev/cam_left_wrist
     pixel_format: mjpeg2rgb
     io_method: mmap
@@ -62,7 +62,7 @@ cameras:
   right_wrist:
     enabled: true
     type: d405
-    serial_number: 260522279497
+    serial_number: 260422274470
     video_device: /dev/cam_right_wrist
     pixel_format: mjpeg2rgb
     io_method: mmap

@@ -9,7 +9,7 @@ MINICONDA_INSTALLER_NAME="Miniconda3-py310_25.3.1-1-Linux-x86_64.sh"
 MINICONDA_INSTALLER_URL="${DEXPROJ_MINICONDA_URL:-https://repo.anaconda.com/miniconda/${MINICONDA_INSTALLER_NAME}}"
 
 if [ ! -f "$MINICONDA_ROOT/etc/profile.d/conda.sh" ]; then
-    tmp_installer="$(mktemp)"
+    tmp_installer="$(mktemp --suffix=.sh)"
     echo "[dexproj] installing Miniconda to $MINICONDA_ROOT ..."
     curl -fL --retry 5 --retry-delay 2 "$MINICONDA_INSTALLER_URL" -o "$tmp_installer"
     bash "$tmp_installer" -b -p "$MINICONDA_ROOT"

@@ -16,9 +16,10 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 CONTAINER_DEXPROJ="${DEXPROJ_CONTAINER_WORKDIR:-/workspace/DexProj}"
 HOST_DEXPROJ="${DEXPROJ_HOST_WORKDIR:-$ROOT_DIR}"
-NATIVE_MODE="${DEXPROJ_NATIVE_MODE:-0}"
+NATIVE_MODE="${DEXPROJ_NATIVE_MODE:-1}"
+USE_DOCKER="${DEXPROJ_USE_DOCKER:-0}"
 NATIVE_ROS_WS_ROOT="${DEXPROJ_ROS_WS_ROOT:-$HOME/ros2_ws}"
-if [ "$NATIVE_MODE" = "1" ] || [ -n "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] || [ -f "/.dockerenv" ]; then
+if [ "$USE_DOCKER" != "1" ] || [ "$NATIVE_MODE" = "1" ] || [ -n "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] || [ -f "/.dockerenv" ]; then
   DEFAULT_CONTROLLER_CONFIG="$HOST_DEXPROJ/wuji-hand-teleop/src/output_devices/tianji_output/tianji_output/config/tianji_output_real_teleop.yaml"
   DEFAULT_OPENVR_CONFIG="$HOST_DEXPROJ/wuji-hand-teleop/src/input_devices/openvr_input/config/openvr_input.yaml"
 else
@@ -55,7 +56,7 @@ run_native() {
     controller_config:="$CONTROLLER_CONFIG"
 }
 
-if { [ "$NATIVE_MODE" = "1" ] || [ -n "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ]; } && [ ! -f "/.dockerenv" ]; then
+if { [ "$USE_DOCKER" != "1" ] || [ "$NATIVE_MODE" = "1" ] || [ -n "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ]; } && [ ! -f "/.dockerenv" ]; then
   run_native
   exit 0
 fi

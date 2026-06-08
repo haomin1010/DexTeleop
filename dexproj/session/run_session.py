@@ -52,19 +52,19 @@ ARM_LOG_FAILURE_MARKERS = (
 
 DEFAULT_CAMERA_TOPIC_SPECS = {
     "head_usb": {"name": "head", "topic": "/stereo/left/compressed", "schema": "compressed_image", "reliability": "best_effort"},
-    "head_realsense": {"name": "head", "topic": "/cam_head/color/image_raw/compressed", "schema": "compressed_image", "reliability": "best_effort"},
+    "head_realsense": {"name": "head", "topic": "/cam_head/color/image_raw", "schema": "image", "reliability": "best_effort"},
     "left_wrist": {
-        "name": "right_wrist",
-        "topic": "/cam_left_wrist/color/image_raw/compressed",
-        "fallback_topics": ["/cam_left_wrist/color/image_rect_raw/compressed"],
-        "schema": "compressed_image",
+        "name": "left_wrist",
+        "topic": "/cam_left_wrist/color/image_raw",
+        "fallback_topics": ["/cam_left_wrist/color/image_rect_raw"],
+        "schema": "image",
         "reliability": "best_effort",
     },
     "right_wrist": {
-        "name": "left_wrist",
-        "topic": "/cam_right_wrist/color/image_raw/compressed",
-        "fallback_topics": ["/cam_right_wrist/color/image_rect_raw/compressed"],
-        "schema": "compressed_image",
+        "name": "right_wrist",
+        "topic": "/cam_right_wrist/color/image_raw",
+        "fallback_topics": ["/cam_right_wrist/color/image_rect_raw"],
+        "schema": "image",
         "reliability": "best_effort",
     },
 }

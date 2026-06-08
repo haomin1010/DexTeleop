@@ -29,7 +29,7 @@ resolve_update_config() {
     done
 }
 
-if [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
+if [ "${DEXPROJ_USE_DOCKER:-0}" = "1" ] && [ -z "${DEXPROJ_RUNNING_IN_CONTAINER:-}" ] && [ ! -f "/.dockerenv" ]; then
     resolve_update_config "$@"
     if [ -n "$update_config" ]; then
         if [ "$#" -eq 0 ]; then
