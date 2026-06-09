@@ -192,12 +192,65 @@ class TriggerError(RuntimeError):
     pass
 
 
+def _resolve_keyboard_fd() -> int:
+    """Prefer /dev/tty so keys are not stolen by other nodes reading the same terminal."""
+    for path in ("/dev/tty",):
+        try:
+            fd = os.open(path, os.O_RDONLY)
+            if os.isatty(fd):
+                return fd
+            os.close(fd)
+        except OSError:
+            continue
+    if sys.stdin.isatty():
+        return sys.stdin.fileno()
+    raise TriggerError("Keyboard trigger requires an interactive TTY.")
+
+
 class BaseTrigger:
     def wait_for_start(self) -> str:
         raise NotImplementedError
 
     def wait_for_stop(self) -> str:
         raise NotImplementedError
+
+
+def wait_for_one_of_keys(
+    key_to_label: dict[str, str],
+    *,
+    prompt: str | None = None,
+) -> tuple[str, str]:
+    """Block until one of the keys is pressed; return ``(label, key)``."""
+    expected = {key.strip().upper(): label for key, label in key_to_label.items()}
+    if not expected:
+        raise TriggerError("wait_for_one_of_keys requires at least one key")
+    if prompt:
+        print(prompt, flush=True)
+    else:
+        keys = ", ".join(sorted(expected))
+        print(f"Press one of [{keys}]...", flush=True)
+    fd = _resolve_keyboard_fd()
+    owns_fd = fd != sys.stdin.fileno()
+    old = termios.tcgetattr(fd)
+    try:
+        tty.setcbreak(fd)
+        while True:
+            ready, _, _ = select.select([fd], [], [], 0.2)
+            if not ready:
+                continue
+            value = os.read(fd, 1).decode("utf-8", errors="ignore")
+            if not value:
+                continue
+            key = value.upper()
+            label = expected.get(key)
+            if label is None:
+                continue
+            print(f"[trigger] keyboard -> {key}")
+            return label, key
+    finally:
+        termios.tcsetattr(fd, termios.TCSADRAIN, old)
+        if owns_fd:
+            os.close(fd)
 
 
 class KeyboardTrigger(BaseTrigger):
@@ -214,10 +267,9 @@ class KeyboardTrigger(BaseTrigger):
         return self._wait_for_key(self.stop_key, prompt="stop")
 
     def _wait_for_key(self, expected: str, prompt: str) -> str:
-        if not sys.stdin.isatty():
-            raise TriggerError("Keyboard trigger requires an interactive TTY.")
         print(f"Press {expected} to {prompt}...", flush=True)
-        fd = sys.stdin.fileno()
+        fd = _resolve_keyboard_fd()
+        owns_fd = fd != sys.stdin.fileno()
         old = termios.tcgetattr(fd)
         try:
             tty.setcbreak(fd)
@@ -234,6 +286,8 @@ class KeyboardTrigger(BaseTrigger):
                     return key
         finally:
             termios.tcsetattr(fd, termios.TCSADRAIN, old)
+            if owns_fd:
+                os.close(fd)
 
 
 class InputsGamepadTrigger(BaseTrigger):
@@ -303,6 +357,37 @@ class CombinedTrigger(BaseTrigger):
 
     def wait_for_stop(self) -> str:
         return _race_triggers(self.primary.wait_for_stop, self.secondary.wait_for_stop)
+
+
+def race_labeled_waits(*labeled_waits: tuple[str, object]) -> tuple[str, str]:
+    """Return ``(label, value)`` for the first completed labeled wait callable."""
+    result: dict[str, str] = {}
+    errors: list[BaseException] = []
+    done = threading.Event()
+
+    def runner(label: str, fn) -> None:
+        try:
+            value = fn()
+            if not done.is_set():
+                result[label] = str(value)
+                done.set()
+        except BaseException as exc:  # pragma: no cover
+            errors.append(exc)
+            if len(errors) >= len(labeled_waits):
+                done.set()
+
+    threads = [
+        threading.Thread(target=runner, args=(label, fn), daemon=True)
+        for label, fn in labeled_waits
+    ]
+    for thread in threads:
+        thread.start()
+    while not done.wait(0.1):
+        continue
+    if result:
+        label, value = next(iter(result.items()))
+        return label, value
+    raise TriggerError("All trigger backends failed: " + "; ".join(str(err) for err in errors))
 
 
 def _race_triggers(primary_wait, secondary_wait) -> str:

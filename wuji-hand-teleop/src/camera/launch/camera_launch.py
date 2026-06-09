@@ -324,6 +324,9 @@ def launch_cameras(context):
     current_delay = 0.0
     is_first_realsense = True
 
+    head_cam_type = str(cameras_config.get('head', {}).get('type', '')).lower() if isinstance(cameras_config.get('head', {}), dict) else ''
+    head_uses_unified_stereo = head_cam_type == 'usb'
+
     # Launch in fixed order: head -> left_wrist -> right_wrist
     for cam_key in ['head', 'left_wrist', 'right_wrist']:
         if cam_key not in cameras_config:
@@ -334,13 +337,38 @@ def launch_cameras(context):
             print(f"[Skip] {cam_key}: not enabled")
             continue
 
-        # Head camera: handled by unified_stereo below (outputs both ROS2 + PICO H.264)
-        # Not started separately in the loop to avoid contention with unified_stereo for the same device
         if cam_key == 'head':
-            if enable_head or enable_pico:
+            if head_uses_unified_stereo and (enable_head or enable_pico):
                 print(f"[Skip] {cam_key}: handled by unified_stereo")
             else:
-                print(f"[Skip] {cam_key}: head camera not enabled (enable_head/enable_pico=false)")
+                cam_type = cam_config.get('type', 'd435i')
+                if not enable_head:
+                    print(f"[Skip] {cam_key}: head camera not enabled (enable_head=false)")
+                    continue
+                if enable_pico and not head_uses_unified_stereo:
+                    print(f"[WARN] {cam_key}: enable_pico requested, but PICO streaming only supports USB stereo unified_stereo")
+                if cam_type in ['d435i', 'd405']:
+                    cam_actions = create_realsense_camera(
+                        cam_config=cam_config,
+                        is_master=is_first_realsense,
+                        enable_sync=enable_sync and realsense_count > 1,
+                    )
+                    is_first_realsense = False
+                elif cam_type == 'usb':
+                    cam_actions = create_usb_camera(cam_config)
+                else:
+                    print(f"[WARN] Unknown camera type: {cam_type}")
+                    continue
+
+                if current_delay > 0:
+                    actions.append(TimerAction(
+                        period=current_delay,
+                        actions=cam_actions
+                    ))
+                else:
+                    actions.extend(cam_actions)
+
+                current_delay += startup_delay
             continue
 
         cam_type = cam_config.get('type', 'd435i')
@@ -371,7 +399,7 @@ def launch_cameras(context):
         current_delay += startup_delay
 
     # ==================== Head Stereo Camera ====================
-    if enable_head or enable_pico:
+    if head_uses_unified_stereo and (enable_head or enable_pico):
         # Unified mode: unified_stereo single process handles ROS2 + PICO H.264 (no v4l2loopback needed)
         print(f"[INFO] Head stereo (unified): {head_device} @ {head_fps}fps, JPEG Q{head_quality}")
         if enable_pico:
@@ -396,6 +424,8 @@ def launch_cameras(context):
         else:
             actions.append(unified_stereo)
         current_delay += startup_delay
+    elif enable_pico:
+        print("[WARN] enable_pico=true ignored because head camera is not configured as USB stereo")
 
     print("=" * 60)
     return actions

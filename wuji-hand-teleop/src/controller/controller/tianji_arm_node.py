@@ -159,7 +159,7 @@ class TianjiArmControllerNode(Node):
     ):
         super().__init__("tianji_arm_controller")
 
-        self._mode = ControlMode.TELEOP
+        self._mode = ControlMode.INFERENCE
         self._logger_adapter = ROS2LoggerAdapter(self.get_logger())
         self._log_counter = 0
         self._dry_run = dry_run
@@ -318,7 +318,7 @@ class TianjiArmControllerNode(Node):
         self._init_move_sides = init_move_sides
         self._init_move_duration_sec = max(float(init_move_duration_sec), 0.1)
         self._teleop_active_sides = self._parse_teleop_active_sides(teleop_active_sides)
-        self._teleop_armed = not self._keyboard_teleop_gate
+        self._teleop_armed = False
         self._align_in_progress = False
         self._keyboard_lock = threading.Lock()
         self._pending_keyboard_start = False
@@ -406,22 +406,27 @@ class TianjiArmControllerNode(Node):
         if self._use_pinocchio_ik:
             self._init_pinocchio_ik()
 
-        # Move to initial position
-        if self._read_only:
-            self.get_logger().info("Read only: keeping robot at its current physical joint angles")
-        elif self._dry_run:
-            self.get_logger().info("Dry run: using configured initial joints as IK reference")
-            self.controller.move_to_init(wait=False, timeout=0)
+        # Move to initial position (session runner arms teleop via start_teleop service).
+        if self._keyboard_teleop_gate:
+            if self._read_only:
+                self.get_logger().info("Read only: keeping robot at its current physical joint angles")
+            elif self._dry_run:
+                self.get_logger().info("Dry run: using configured initial joints as IK reference")
+                self.controller.move_to_init(wait=False, timeout=0)
+            else:
+                self.get_logger().info(
+                    f"Moving arm to initial position (sides={self._init_move_sides}, "
+                    f"{self._init_move_duration_sec:.1f}s)..."
+                )
+                self.controller.move_to_init(
+                    wait=True,
+                    timeout=1,
+                    duration=self._init_move_duration_sec,
+                    sides=self._init_move_sides,
+                )
         else:
             self.get_logger().info(
-                f"Moving arm to initial position (sides={self._init_move_sides}, "
-                f"{self._init_move_duration_sec:.1f}s)..."
-            )
-            self.controller.move_to_init(
-                wait=True,
-                timeout=1,
-                duration=self._init_move_duration_sec,
-                sides=self._init_move_sides,
+                "Session teleop gate: holding current pose until /tianji_arm/start_teleop"
             )
         if self._keyboard_teleop_gate:
             self.get_logger().info(
@@ -530,9 +535,8 @@ class TianjiArmControllerNode(Node):
         self.create_service(SetBool, '/tianji_arm/switch_mode', self._switch_mode_callback)
         self.create_service(Trigger, '/tianji_arm/get_mode', self._get_mode_callback)
         self.create_service(Trigger, '/tianji_arm/reset_tracker_zero', self._reset_tracker_zero_callback)
-        if self._keyboard_teleop_gate:
-            self.create_service(Trigger, '/tianji_arm/start_teleop', self._start_teleop_callback)
-            self.create_service(Trigger, '/tianji_arm/stop_teleop', self._stop_teleop_callback)
+        self.create_service(Trigger, '/tianji_arm/start_teleop', self._start_teleop_callback)
+        self.create_service(Trigger, '/tianji_arm/stop_teleop', self._stop_teleop_callback)
 
         self.create_timer(1.0 / self._control_rate_hz, self._control_loop)
 
@@ -1029,7 +1033,7 @@ class TianjiArmControllerNode(Node):
 
     def _control_loop(self):
         self._publish_state()
-        if self._keyboard_teleop_gate:
+        if self._keyboard_teleop_gate or self._pending_keyboard_start or self._pending_keyboard_stop:
             self._handle_pending_keyboard()
 
         if self._mode == ControlMode.TELEOP:
@@ -1039,7 +1043,9 @@ class TianjiArmControllerNode(Node):
 
     def _teleop_control(self):
         """Teleoperation control: TF → IK → robot"""
-        if self._keyboard_teleop_gate and (not self._teleop_armed or self._align_in_progress):
+        if self._align_in_progress:
+            return
+        if not self._teleop_armed:
             return
         elapsed = time.monotonic() - self._start_time
         if elapsed < self._tracker_start_delay_sec:

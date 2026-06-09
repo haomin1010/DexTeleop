@@ -19,9 +19,12 @@ except ImportError:  # pragma: no cover
 from dexproj.check_devices.cli import collect_report, evaluate_report
 from dexproj.hand_teleop.config import HandChannelConfig, HandTeleopConfig
 from dexproj.integration.bringup import BringupConfig, apply_hand_teleop_overrides, resolve_launch_command
-from dexproj.recording.ros_writers import JointCsvPairRecorder, RosImageFrameRecorder
+from dexproj.tools.camera_serial import auto_update_config_if_enabled as auto_update_camera_config_if_enabled
+from dexproj.tools.wuji_glove_sn import auto_update_config_if_enabled, ensure_retargeting_assets
+from dexproj.recording.ros_writers import FloatArrayCsvPairRecorder, JointCsvPairRecorder, RosImageFrameRecorder
 from dexproj.recording.session_recorder import SessionRecorder
 from dexproj.recording.tj_raw import TJRawEpisodeWriter
+from dexproj.session.episode_sync import request_episode_sync
 from dexproj.session.runtime_support import (
     CombinedTrigger,
     InputsGamepadTrigger,
@@ -29,10 +32,11 @@ from dexproj.session.runtime_support import (
     ManagedProcessGroup,
     ManagedProcessSpec,
     PeriodicStatusWriter,
+    wait_for_one_of_keys,
 )
 
 VALID_TRIGGER_MODES = {"gamepad", "keyboard", "both"}
-VALID_RUNTIME_STATES = {"initialized", "ready", "running", "stopped"}
+VALID_RUNTIME_STATES = {"initialized", "ready", "teleop", "recording", "stopped"}
 VALID_SESSION_MODES = {"single_left", "single_right", "dual"}
 ARM_READY_SERVICE = "/tianji_arm/get_mode"
 ARM_SWITCH_MODE_SERVICE = "/tianji_arm/switch_mode"
@@ -45,11 +49,40 @@ ARM_LOG_FAILURE_MARKERS = (
     "ConnectionError:",
 )
 
-CAMERA_TOPIC_SPECS = [
-    {"name": "head", "topic": "/cam_head/color/image_raw", "schema": "image"},
-    {"name": "left_wrist", "topic": "/cam_left_wrist/color/image_rect_raw", "schema": "image"},
-    {"name": "right_wrist", "topic": "/cam_right_wrist/color/image_rect_raw", "schema": "image"},
-]
+DEFAULT_CAMERA_TOPIC_SPECS = {
+    "head_usb": {
+        "name": "head",
+        "topic": "/stereo/left/compressed",
+        "fallback_topics": ["/cam_head/color/image_raw/compressed"],
+        "schema": "compressed_image",
+        "reliability": "reliable",
+    },
+    "head_realsense": {
+        "name": "head",
+        "topic": "/cam_head/color/image_raw/compressed",
+        "fallback_topics": ["/stereo/left/compressed"],
+        "schema": "compressed_image",
+        "reliability": "reliable",
+    },
+    "left_wrist": {
+        "name": "left_wrist",
+        "topic": "/cam_left_wrist/color/image_raw",
+        "fallback_topics": [
+            "/cam_left_wrist/color/image_rect_raw",
+        ],
+        "schema": "image",
+        "reliability": "reliable",
+    },
+    "right_wrist": {
+        "name": "right_wrist",
+        "topic": "/cam_right_wrist/color/image_raw",
+        "fallback_topics": [
+            "/cam_right_wrist/color/image_rect_raw",
+        ],
+        "schema": "image",
+        "reliability": "reliable",
+    },
+}
 
 
 @dataclass
@@ -64,9 +97,35 @@ class TriggerConfig:
         if self.trigger_mode not in VALID_TRIGGER_MODES:
             raise ValueError(f"Unsupported trigger_mode: {self.trigger_mode}")
         if self.gamepad_start is None:
-            self.gamepad_start = ["lb", "rb"]
+            self.gamepad_start = []
         if self.gamepad_stop is None:
-            self.gamepad_stop = ["start"]
+            self.gamepad_stop = []
+
+
+def _trigger_config_from_raw(raw: dict, *, role: str) -> TriggerConfig:
+    if role == "teleop":
+        defaults = TriggerConfig(
+            trigger_mode="both",
+            gamepad_start=[],
+            gamepad_stop=[],
+            keyboard_start="B",
+            keyboard_stop="E",
+        )
+    else:
+        defaults = TriggerConfig(
+            trigger_mode="both",
+            gamepad_start=["lb", "rb"],
+            gamepad_stop=["start"],
+            keyboard_start="S",
+            keyboard_stop="D",
+        )
+    return TriggerConfig(
+        trigger_mode=str(raw.get("trigger_mode", defaults.trigger_mode)),
+        gamepad_start=list(raw.get("gamepad_start", defaults.gamepad_start or [])),
+        gamepad_stop=list(raw.get("gamepad_stop", defaults.gamepad_stop or [])),
+        keyboard_start=str(raw.get("keyboard_start", defaults.keyboard_start)),
+        keyboard_stop=str(raw.get("keyboard_stop", defaults.keyboard_stop)),
+    )
 
 
 @dataclass
@@ -77,7 +136,8 @@ class SessionConfig:
     openvr_config: str
     camera_config: str
     enable_camera: bool
-    trigger: TriggerConfig
+    teleop_trigger: TriggerConfig
+    record_trigger: TriggerConfig
 
     @classmethod
     def from_yaml(cls, path: Path) -> "SessionConfig":
@@ -92,6 +152,25 @@ class SessionConfig:
         if not isinstance(trigger_raw, dict):
             trigger_raw = {}
 
+        if "teleop" in trigger_raw or "record" in trigger_raw:
+            teleop_raw = trigger_raw.get("teleop", {})
+            record_raw = trigger_raw.get("record", {})
+            if not isinstance(teleop_raw, dict):
+                teleop_raw = {}
+            if not isinstance(record_raw, dict):
+                record_raw = {}
+            teleop_trigger = _trigger_config_from_raw(teleop_raw, role="teleop")
+            record_trigger = _trigger_config_from_raw(record_raw, role="record")
+        else:
+            teleop_trigger = _trigger_config_from_raw(trigger_raw, role="teleop")
+            record_trigger = TriggerConfig(
+                trigger_mode=str(trigger_raw.get("trigger_mode", "both")),
+                gamepad_start=list(trigger_raw.get("gamepad_start", ["lb", "rb"])),
+                gamepad_stop=list(trigger_raw.get("gamepad_stop", ["start"])),
+                keyboard_start="S",
+                keyboard_stop="D",
+            )
+
         return cls(
             mode=str(raw.get("mode", "dual")),
             bringup_config=str(raw.get("bringup_config", "config/bringup_htc.yaml")),
@@ -99,13 +178,8 @@ class SessionConfig:
             openvr_config=str(raw.get("openvr_config", "config/htc_openvr_tracker.yaml")),
             camera_config=str(raw.get("camera_config", "config/camera_config.yaml")),
             enable_camera=bool(raw.get("enable_camera", False)),
-            trigger=TriggerConfig(
-                trigger_mode=str(trigger_raw.get("trigger_mode", "both")),
-                gamepad_start=list(trigger_raw.get("gamepad_start", ["lb", "rb"])),
-                gamepad_stop=list(trigger_raw.get("gamepad_stop", ["start"])),
-                keyboard_start=str(trigger_raw.get("keyboard_start", "B")),
-                keyboard_stop=str(trigger_raw.get("keyboard_stop", "E")),
-            ),
+            teleop_trigger=teleop_trigger,
+            record_trigger=record_trigger,
         )
 
 
@@ -119,6 +193,7 @@ class SessionRuntime:
         self.tj_raw_writer: TJRawEpisodeWriter | None = None
         self.joint_writers: list[JointCsvPairRecorder] = []
         self.camera_writers: list[RosImageFrameRecorder] = []
+        self.camera_topic_specs = _resolve_camera_topic_specs(plan)
         self._ensure_valid_state()
 
     def _ensure_valid_state(self) -> None:
@@ -131,12 +206,24 @@ class SessionRuntime:
         self._ensure_valid_state()
         print(f"[session] state -> {self.state}")
 
-    def enter_running(self, trigger: str) -> None:
-        self.state = "running"
+    def start_teleop(self, trigger: str) -> None:
+        self.state = "teleop"
         self.plan["runtime_state"] = self.state
         self._ensure_valid_state()
-        self.plan.setdefault("runtime", {})["start_trigger"] = trigger
-        self.plan["runtime"]["started_unix"] = time.time()
+        runtime = self.plan.setdefault("runtime", {})
+        runtime["teleop_start_trigger"] = trigger
+        runtime["teleop_started_unix"] = time.time()
+        print(f"[session] teleop started (trigger={trigger})")
+
+    def start_recording(self, trigger: str) -> None:
+        if self.state == "recording":
+            raise RuntimeError("Recording is already active.")
+        self.state = "recording"
+        self.plan["runtime_state"] = self.state
+        self._ensure_valid_state()
+        runtime = self.plan.setdefault("runtime", {})
+        runtime["record_start_trigger"] = trigger
+        runtime["record_started_unix"] = time.time()
         paths = self.recorder.start(self.plan, trigger)
         self.plan["recording"] = {
             "session_dir": str(paths.session_dir),
@@ -145,50 +232,68 @@ class SessionRuntime:
             "runtime_dir": str(paths.runtime_dir),
             "logs_dir": str(paths.logs_dir),
         }
-        self.tj_raw_writer = TJRawEpisodeWriter(paths.episode_dir, camera_names=[spec["name"] for spec in CAMERA_TOPIC_SPECS])
+        self.tj_raw_writer = TJRawEpisodeWriter(
+            paths.episode_dir,
+            camera_names=[spec["name"] for spec in self.camera_topic_specs],
+        )
         self.tj_raw_writer.start(self.plan)
         self._attach_writers(paths.episode_dir)
         self.status_writer = PeriodicStatusWriter(Path(self.plan["recording"]["runtime_dir"]) / "runtime_status.ndjson")
         self.status_writer.start(self._build_status_snapshot)
-        print(f"[session] state -> {self.state} (trigger={trigger})")
-        print(f"[session] episode dir: {paths.episode_dir}")
+        episode_dir = paths.episode_dir.resolve()
+        print(f"[session] recording started (trigger={trigger})")
+        print(f"[session] episode dir: {episode_dir}")
+        print(f"[session] data will sync to host data/{episode_dir.relative_to(Path('data').resolve())} after D")
 
-    def enter_stopped(self, trigger: str) -> None:
+    def stop_recording(self, trigger: str) -> None:
+        if self.state != "recording":
+            return
+        self.state = "teleop"
+        self.plan["runtime_state"] = self.state
+        self._ensure_valid_state()
+        runtime = self.plan.setdefault("runtime", {})
+        runtime["record_stop_trigger"] = trigger
+        runtime["record_stopped_unix"] = time.time()
+        episode_dir = Path(self.plan.get("recording", {}).get("episode_dir", ""))
+        if self.status_writer is not None:
+            self.status_writer.stop()
+            self.status_writer = None
+        if episode_dir.is_dir():
+            self._write_camera_diagnostics(episode_dir)
+        for recorder in self.joint_writers:
+            recorder.stop()
+        self.joint_writers.clear()
+        for recorder in self.camera_writers:
+            recorder.stop()
+        self.camera_writers.clear()
+        if self.tj_raw_writer is not None:
+            self.tj_raw_writer.close()
+            self.tj_raw_writer = None
+        self.recorder.stop(trigger)
+        if episode_dir.is_dir():
+            request_episode_sync(episode_dir)
+        print(f"[session] recording stopped (trigger={trigger})")
+
+    def shutdown(self, trigger: str) -> None:
+        if self.state == "recording":
+            self.stop_recording(f"auto_before_shutdown:{trigger}")
         self.state = "stopped"
         self.plan["runtime_state"] = self.state
         self._ensure_valid_state()
-        self.plan.setdefault("runtime", {})["stop_trigger"] = trigger
-        self.plan["runtime"]["stopped_unix"] = time.time()
-        if self.status_writer is not None:
-            self.status_writer.stop()
+        runtime = self.plan.setdefault("runtime", {})
+        runtime["teleop_stop_trigger"] = trigger
+        runtime["stopped_unix"] = time.time()
         self.process_group.stop_all()
         self._fallback_disable_tianji()
-        for recorder in self.joint_writers:
-            recorder.stop()
-        for recorder in self.camera_writers:
-            recorder.stop()
-        if self.tj_raw_writer is not None:
-            self.tj_raw_writer.close()
-        self.recorder.stop(trigger)
         print(f"[session] state -> {self.state} (trigger={trigger})")
 
     def abort(self, reason: str) -> None:
         with suppress(Exception):
-            if self.status_writer is not None:
-                self.status_writer.stop()
+            self.stop_recording(f"abort:{reason}")
         with suppress(Exception):
             self.process_group.stop_all()
         with suppress(Exception):
             self._fallback_disable_tianji()
-        for recorder in self.joint_writers:
-            with suppress(Exception):
-                recorder.stop()
-        for recorder in self.camera_writers:
-            with suppress(Exception):
-                recorder.stop()
-        with suppress(Exception):
-            if self.tj_raw_writer is not None:
-                self.tj_raw_writer.close()
         with suppress(Exception):
             self.recorder.abort(reason)
         self.state = "stopped"
@@ -229,14 +334,16 @@ class SessionRuntime:
             self.recorder.register_writer("data", f"{recorder.name}_action", recorder.action_path)
 
         camera_root = episode_dir / "camera_data"
-        for spec in CAMERA_TOPIC_SPECS:
+        for spec in self.camera_topic_specs:
             camera_dir = camera_root / spec["name"]
             recorder = RosImageFrameRecorder(
                 name=spec["name"],
                 topic=spec["topic"],
+                fallback_topics=list(spec.get("fallback_topics", [])),
                 image_dir=camera_dir / "images",
                 frames_csv_path=camera_dir / "frames.csv",
                 schema=spec["schema"],
+                reliability=str(spec.get("reliability", "best_effort")),
             )
             recorder.start()
             self.camera_writers.append(recorder)
@@ -246,14 +353,25 @@ class SessionRuntime:
         self.recorder.register_log_artifact("sample_info", sample_info_path)
 
     def _build_joint_recorders(self, episode_dir: Path) -> list[JointCsvPairRecorder]:
-        hand_state_topics = {
-            "left": "/wuji_hand/left/joint_state",
-            "right": "/wuji_hand/right/joint_state",
-        }
-        hand_action_topics = {
-            "left": "/wuji_hand/left/joint_command",
-            "right": "/wuji_hand/right/joint_command",
-        }
+        hand_input = str(self.plan.get("bringup", {}).get("hand_input", "none"))
+        if hand_input == "manus":
+            hand_state_topics = {
+                "left": "/left_hand/joint_states",
+                "right": "/right_hand/joint_states",
+            }
+            hand_action_topics = {
+                "left": "/wuji_hand/left/joint_command",
+                "right": "/wuji_hand/right/joint_command",
+            }
+        else:
+            hand_state_topics = {
+                "left": "/wuji_hand/left/joint_state",
+                "right": "/wuji_hand/right/joint_state",
+            }
+            hand_action_topics = {
+                "left": "/wuji_hand/left/joint_command",
+                "right": "/wuji_hand/right/joint_command",
+            }
 
         return [
             JointCsvPairRecorder(
@@ -272,6 +390,24 @@ class SessionRuntime:
                 columns_by_side={
                     "left": [f"left_joint_{index}.pos" for index in range(1, 8)],
                     "right": [f"right_joint_{index}.pos" for index in range(1, 8)],
+                },
+            ),
+            FloatArrayCsvPairRecorder(
+                name="arm_ee_pose",
+                state_topics={
+                    "left": "/tianji_arm/left/left_ee_pose",
+                    "right": "/tianji_arm/right/right_ee_pose",
+                },
+                action_topics={
+                    "left": "/tianji_arm/left/left_ee_pose",
+                    "right": "/tianji_arm/right/right_ee_pose",
+                },
+                timestamp_path=episode_dir / "arm_data" / "ee_pose_timestamp.csv",
+                observation_path=episode_dir / "arm_data" / "ee_pose_observation_state.csv",
+                action_path=episode_dir / "arm_data" / "ee_pose_action.csv",
+                columns_by_side={
+                    "left": [f"left_ee_pose_{name}" for name in ("x", "y", "z", "a", "b", "c")],
+                    "right": [f"right_ee_pose_{name}" for name in ("x", "y", "z", "a", "b", "c")],
                 },
             ),
             JointCsvPairRecorder(
@@ -295,7 +431,29 @@ class SessionRuntime:
             "recording": self.plan.get("recording", {}),
             "bringup": self.plan.get("bringup", {}),
             "trigger": self.plan.get("trigger", {}),
+            "processes": self.process_group.snapshot(),
+            "cameras": [recorder.snapshot() for recorder in self.camera_writers],
         }
+
+    def _write_camera_diagnostics(self, episode_dir: Path) -> None:
+        diagnostics = {
+            "generated_at_unix": time.time(),
+            "processes": self.process_group.snapshot(),
+            "cameras": [recorder.snapshot() for recorder in self.camera_writers],
+        }
+        output_path = episode_dir / "_runtime" / "camera_recording_diagnostics.json"
+        output_path.write_text(json.dumps(diagnostics, ensure_ascii=False, indent=2), encoding="utf-8")
+        missing = [
+            camera["name"]
+            for camera in diagnostics["cameras"]
+            if int(camera.get("frame_count", 0) or 0) <= 0
+        ]
+        if missing:
+            print(
+                "[session] warning: no camera frames recorded for "
+                + ", ".join(str(name) for name in missing)
+                + f" (see {output_path})"
+            )
 
 
 def build_arg_parser() -> argparse.ArgumentParser:
@@ -306,15 +464,30 @@ def build_arg_parser() -> argparse.ArgumentParser:
     return parser
 
 
+def _has_gamepad(trigger_cfg: TriggerConfig) -> bool:
+    return bool(trigger_cfg.gamepad_start or trigger_cfg.gamepad_stop)
+
+
 def _build_trigger(trigger_cfg: TriggerConfig):
-    if trigger_cfg.trigger_mode == "keyboard":
-        return KeyboardTrigger(trigger_cfg.keyboard_start, trigger_cfg.keyboard_stop)
+    keyboard = KeyboardTrigger(trigger_cfg.keyboard_start, trigger_cfg.keyboard_stop)
+    if trigger_cfg.trigger_mode == "keyboard" or not _has_gamepad(trigger_cfg):
+        return keyboard
     if trigger_cfg.trigger_mode == "gamepad":
         return InputsGamepadTrigger(trigger_cfg.gamepad_start, trigger_cfg.gamepad_stop)
     return CombinedTrigger(
         InputsGamepadTrigger(trigger_cfg.gamepad_start, trigger_cfg.gamepad_stop),
-        KeyboardTrigger(trigger_cfg.keyboard_start, trigger_cfg.keyboard_stop),
+        keyboard,
     )
+
+
+def _serialize_trigger(trigger_cfg: TriggerConfig) -> dict:
+    return {
+        "trigger_mode": trigger_cfg.trigger_mode,
+        "gamepad_start": list(trigger_cfg.gamepad_start or []),
+        "gamepad_stop": list(trigger_cfg.gamepad_stop or []),
+        "keyboard_start": trigger_cfg.keyboard_start,
+        "keyboard_stop": trigger_cfg.keyboard_stop,
+    }
 
 
 def _load_plan(
@@ -364,15 +537,47 @@ def _load_plan(
             "config": config.camera_config,
         },
         "trigger": {
-            "trigger_mode": config.trigger.trigger_mode,
-            "gamepad_start": list(config.trigger.gamepad_start or []),
-            "gamepad_stop": list(config.trigger.gamepad_stop or []),
-            "keyboard_start": config.trigger.keyboard_start,
-            "keyboard_stop": config.trigger.keyboard_stop,
+            "teleop": _serialize_trigger(config.teleop_trigger),
+            "record": _serialize_trigger(config.record_trigger),
         },
         "runtime_state": "initialized",
         "runtime": {},
     }
+
+
+def _load_camera_config_dict(camera_config_path: str) -> dict:
+    if yaml is None:
+        return {}
+    path = Path(camera_config_path).expanduser().resolve()
+    if not path.exists():
+        return {}
+    with path.open("r", encoding="utf-8") as handle:
+        raw = yaml.safe_load(handle) or {}
+    return raw if isinstance(raw, dict) else {}
+
+
+def _resolve_camera_topic_specs(plan: dict) -> list[dict]:
+    camera_plan = plan.get("camera", {})
+    camera_config_path = str(camera_plan.get("config", "config/camera_config.yaml"))
+    config = _load_camera_config_dict(camera_config_path)
+    cameras = config.get("cameras", {}) if isinstance(config.get("cameras", {}), dict) else {}
+
+    specs: list[dict] = []
+    for key in ("head", "left_wrist", "right_wrist"):
+        cam_cfg = cameras.get(key, {})
+        if not isinstance(cam_cfg, dict) or not bool(cam_cfg.get("enabled", False)):
+            continue
+        cam_type = str(cam_cfg.get("type", "") or "").strip().lower()
+        if key == "head":
+            spec_key = "head_realsense" if cam_type in {"d435i", "d405"} else "head_usb"
+            spec = DEFAULT_CAMERA_TOPIC_SPECS[spec_key]
+            device_path = str(cam_cfg.get("video_device", "") or "").strip()
+            if spec_key == "head_usb" and device_path and not Path(device_path).exists():
+                print(f"[session] warning: head camera device missing, recording may stay empty: {device_path}")
+        else:
+            spec = DEFAULT_CAMERA_TOPIC_SPECS[key]
+        specs.append(dict(spec))
+    return specs
 
 
 def _build_camera_process(plan: dict) -> ManagedProcessSpec:
@@ -380,6 +585,13 @@ def _build_camera_process(plan: dict) -> ManagedProcessSpec:
     if not camera_plan.get("enabled", False):
         raise ValueError("Camera process requested without enable_camera=true")
     camera_config = str(camera_plan.get("config", "config/camera_config.yaml"))
+    camera_cfg = _load_camera_config_dict(camera_config)
+    cameras = camera_cfg.get("cameras", {}) if isinstance(camera_cfg.get("cameras", {}), dict) else {}
+    head_cfg = cameras.get("head", {}) if isinstance(cameras.get("head", {}), dict) else {}
+    enable_head = bool(head_cfg.get("enabled", False))
+    head_device = str(head_cfg.get("video_device", "") or "").strip()
+    if enable_head and head_device and not Path(head_device).exists():
+        print(f"[session] warning: head camera device missing, still launching head stack: {head_device}")
     return ManagedProcessSpec(
         name="camera",
         command=[
@@ -388,7 +600,7 @@ def _build_camera_process(plan: dict) -> ManagedProcessSpec:
             "camera",
             "camera_launch.py",
             f"config_file:={camera_config}",
-            "enable_head:=true",
+            f"enable_head:={'true' if enable_head else 'false'}",
             "enable_pico:=false",
         ],
         cwd=Path(".").resolve(),
@@ -582,6 +794,7 @@ def _arm_keyboard_gate_service_if_present(enabled: bool) -> None:
         print(f"[session] warning: {exc}")
         return
     if service_name not in services:
+        print(f"[session] warning: {service_name} not available; arm teleop may stay disarmed")
         return
     _call_trigger_service(service_name)
 
@@ -621,7 +834,29 @@ def _print_dry_run(plan: dict) -> None:
 def _resolve_configs(config_path: Path) -> tuple[SessionConfig, BringupConfig, HandTeleopConfig, list[str]]:
     session_cfg = SessionConfig.from_yaml(config_path)
     bringup_cfg = BringupConfig.from_yaml(Path(session_cfg.bringup_config).expanduser().resolve())
-    hand_cfg = HandTeleopConfig.from_yaml(Path(session_cfg.hand_teleop_config).expanduser().resolve())
+    if session_cfg.enable_camera and bringup_cfg.enable_camera:
+        print("[session] note: bringup enable_camera disabled; session launches camera process separately")
+        bringup_cfg.enable_camera = False
+    hand_config_path = Path(session_cfg.hand_teleop_config).expanduser().resolve()
+    camera_config_path = Path(session_cfg.camera_config).expanduser().resolve()
+    workspace_root = hand_config_path.parent.parent
+    ensure_retargeting_assets(workspace_root)
+    camera_updates = auto_update_camera_config_if_enabled(camera_config_path)
+    for side, serial in sorted(camera_updates.items()):
+        print(f"[session] auto-discovered {side} serial_number={serial}")
+    if session_cfg.enable_camera and not camera_updates:
+        camera_cfg = _load_camera_config_dict(str(camera_config_path))
+        cameras = camera_cfg.get("cameras", {}) if isinstance(camera_cfg.get("cameras", {}), dict) else {}
+        for side in ("left_wrist", "right_wrist"):
+            wrist = cameras.get(side, {})
+            if isinstance(wrist, dict) and wrist.get("enabled") and not str(wrist.get("serial_number", "")).strip():
+                print(f"[session] warning: {side} RealSense serial not set; camera may not publish")
+    updates = auto_update_config_if_enabled(hand_config_path)
+    for kind, side_mapping in updates.items():
+        label = "glove_sn" if kind == "glove" else "hand_sn"
+        for side, serial in sorted(side_mapping.items()):
+            print(f"[session] auto-discovered {side} {label}={serial}")
+    hand_cfg = HandTeleopConfig.from_yaml(hand_config_path)
     bringup_command = apply_hand_teleop_overrides(resolve_launch_command(bringup_cfg), hand_cfg, bringup_cfg.mode)
     bringup_command.append(f"openvr_config:={Path(session_cfg.openvr_config).expanduser().resolve()}")
     return session_cfg, bringup_cfg, hand_cfg, bringup_command
@@ -647,23 +882,73 @@ def main() -> int:
         return 0
 
     runtime = SessionRuntime(plan)
+    teleop_trigger = _build_trigger(session_cfg.teleop_trigger)
     try:
         runtime.enter_ready()
-        trigger = _build_trigger(session_cfg.trigger)
-        start_trigger = trigger.wait_for_start()
+        print("[session] teleop: B/E (keyboard), record: S/D (keyboard)")
         runtime.process_group = _start_processes(plan, dry_run=args.dry_run)
         if plan.get("bringup", {}).get("enable_arm", False):
             _wait_for_arm_ready(runtime.process_group)
-        runtime.enter_running(start_trigger)
+            _set_arm_teleop_enabled(False)
+
+        teleop_start = teleop_trigger.wait_for_start()
+        runtime.start_teleop(teleop_start)
         if plan.get("bringup", {}).get("enable_arm", False):
             _set_arm_teleop_enabled(True)
             _arm_keyboard_gate_service_if_present(True)
-        stop_trigger = trigger.wait_for_stop()
-        if plan.get("bringup", {}).get("enable_arm", False):
-            _arm_keyboard_gate_service_if_present(False)
-        runtime.enter_stopped(stop_trigger)
+
+        record_start_key = session_cfg.record_trigger.keyboard_start.upper()
+        record_stop_key = session_cfg.record_trigger.keyboard_stop.upper()
+        teleop_stop_key = session_cfg.teleop_trigger.keyboard_stop.upper()
+        print(
+            "[session] teleop active — "
+            f"{record_start_key}=start recording, "
+            f"{record_stop_key}=stop recording, "
+            f"{teleop_stop_key}=end session"
+        )
+
+        while True:
+            label, event_key = wait_for_one_of_keys(
+                {
+                    record_start_key: "record_start",
+                    teleop_stop_key: "teleop_stop",
+                },
+                prompt=(
+                    f"[session] Press {record_start_key} to start recording, "
+                    f"{teleop_stop_key} to end session"
+                ),
+            )
+            if label == "teleop_stop":
+                if plan.get("bringup", {}).get("enable_arm", False):
+                    _arm_keyboard_gate_service_if_present(False)
+                    _set_arm_teleop_enabled(False)
+                runtime.shutdown(event_key)
+                break
+
+            runtime.start_recording(event_key)
+            label, event_key = wait_for_one_of_keys(
+                {
+                    record_stop_key: "record_stop",
+                    teleop_stop_key: "teleop_stop",
+                },
+                prompt=(
+                    f"[session] Press {record_stop_key} to stop recording, "
+                    f"{teleop_stop_key} to end session"
+                ),
+            )
+            runtime.stop_recording(event_key)
+            if label == "teleop_stop":
+                if plan.get("bringup", {}).get("enable_arm", False):
+                    _arm_keyboard_gate_service_if_present(False)
+                    _set_arm_teleop_enabled(False)
+                runtime.shutdown(event_key)
+                break
         return 0
     except KeyboardInterrupt:
+        with suppress(Exception):
+            if plan.get("bringup", {}).get("enable_arm", False):
+                _arm_keyboard_gate_service_if_present(False)
+                _set_arm_teleop_enabled(False)
         runtime.abort("keyboard_interrupt")
         return 130
     except Exception as exc:

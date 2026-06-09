@@ -1,18 +1,17 @@
 global:
-  startup_delay: 2.0
+  startup_delay: 8.0
   enable_sync: false
 
 cameras:
+  # D435I as head (no USB stereo /dev/stereo_camera on this machine).
   head:
     enabled: true
-    type: usb
-    video_device: /dev/stereo_camera
-    pixel_format: mjpeg2rgb
-    io_method: mmap
+    type: d435i
+    serial_number: "254322070127"
     resolution:
-      width: 2560
-      height: 720
-      fps: 60
+      width: 848
+      height: 480
+      fps: 30
     camera_name: cam_head
     streams:
       enable_color: true
@@ -30,10 +29,9 @@ cameras:
   left_wrist:
     enabled: true
     type: d405
-    serial_number: LEFT_WRIST_REALSENSE_SN
+    auto_discover_serial: true
+    serial_number: "260522272600"
     video_device: /dev/cam_left_wrist
-    pixel_format: mjpeg2rgb
-    io_method: mmap
     resolution:
       width: 848
       height: 480
@@ -55,10 +53,9 @@ cameras:
   right_wrist:
     enabled: true
     type: d405
-    serial_number: RIGHT_WRIST_REALSENSE_SN
+    auto_discover_serial: true
+    serial_number: "260522279497"
     video_device: /dev/cam_right_wrist
-    pixel_format: mjpeg2rgb
-    io_method: mmap
     resolution:
       width: 848
       height: 480

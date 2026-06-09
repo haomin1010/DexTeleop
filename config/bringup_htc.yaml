@@ -2,7 +2,8 @@
 # This repository currently supports HTC/OpenVR as the only arm teleop route.
 
 mode: dual
-enable_camera: false
+enable_camera: true
+camera_config: config/camera_config.yaml
 enable_rviz: true
 
 hand_input: wuji_glove

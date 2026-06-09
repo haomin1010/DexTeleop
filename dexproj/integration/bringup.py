@@ -32,6 +32,7 @@ VALID_MODES = {"single_left", "single_right", "dual"}
 class BringupConfig:
     mode: str = "dual"
     enable_camera: bool = False
+    camera_config: str = "config/camera_config.yaml"
     enable_rviz: bool = False
     enable_arm: bool = True
     hand_input: str = "wuji_glove"
@@ -54,6 +55,7 @@ class BringupConfig:
         return cls(
             mode=str(raw.get("mode", "dual")),
             enable_camera=bool(raw.get("enable_camera", False)),
+            camera_config=str(raw.get("camera_config", "config/camera_config.yaml")),
             enable_rviz=bool(raw.get("enable_rviz", False)),
             enable_arm=bool(raw.get("enable_arm", True)),
             hand_input=str(raw.get("hand_input", "wuji_glove")),
@@ -89,6 +91,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         "--camera",
         action="store_true",
         help="Enable camera launch even if config disables it.",
+    )
+    parser.add_argument(
+        "--camera-config",
+        default=None,
+        help="Override camera config file passed to camera launch.",
     )
     parser.add_argument(
         "--rviz",
@@ -151,6 +158,7 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
         )
         if config.enable_camera:
             extra_args.append("enable_camera:=true")
+            extra_args.append(f"camera_config:={config.camera_config}")
     else:
         launch_file = "wuji_teleop_camera.launch.py" if config.enable_camera else "wuji_teleop_single.launch.py"
         side = "left" if config.mode == "single_left" else "right"
@@ -163,6 +171,7 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
         )
         if config.enable_camera:
             extra_args.append("enable_camera:=true")
+            extra_args.append(f"camera_config:={config.camera_config}")
 
     if config.enable_arm:
         extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
@@ -236,6 +245,8 @@ def main() -> int:
         config.mode = args.mode
     if args.camera:
         config.enable_camera = True
+    if args.camera_config is not None:
+        config.camera_config = args.camera_config
     if args.rviz:
         config.enable_rviz = True
     if args.hand_only:

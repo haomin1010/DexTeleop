@@ -102,7 +102,8 @@ wrist_orientation_axis_basis:
 wrist_orientation_max_deg: 35.0
 tracker_start_delay_sec: 0.0
 
-keyboard_teleop_gate: true
+# Session runner owns B/E/S/D on the terminal; arm node uses start/stop_teleop services.
+keyboard_teleop_gate: false
 keyboard_start_key: B
 keyboard_stop_key: E
 keyboard_start_align_sec: 3.0

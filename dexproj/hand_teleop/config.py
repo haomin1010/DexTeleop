@@ -28,6 +28,7 @@ class HandTeleopConfig:
     mode: str
     backend: str
     auto_discover_glove_sn: bool
+    auto_discover_hand_sn: bool
     left: HandChannelConfig | None
     right: HandChannelConfig | None
 
@@ -67,6 +68,7 @@ class HandTeleopConfig:
             mode=mode,
             backend="teleop_real" if backend == "py" else backend,
             auto_discover_glove_sn=bool(raw.get("auto_discover_glove_sn", False)),
+            auto_discover_hand_sn=bool(raw.get("auto_discover_hand_sn", False)),
             left=_channel("left"),
             right=_channel("right"),
         )
