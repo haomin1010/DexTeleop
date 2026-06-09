@@ -337,7 +337,7 @@ class Marvin_Robot:
             int: Connection status code 1: True; 0: False
 
         eg:
-            connect(robot_ip='192.168.1.190')
+            connect(robot_ip='192.168.8.166')
         '''
         ip1, ip2, ip3, ip4 = self._convert_ip(robot_ip)
         return self.robot.OnLinkTo(ip1, ip2, ip3, ip4)

@@ -26,7 +26,7 @@ Public interface:
 Usage example:
     # Unified controller (recommended)
     from tianji_output import TianjiArmController
-    controller = TianjiArmController(robot_ip='192.168.1.190')
+    controller = TianjiArmController(robot_ip='192.168.8.166')
     controller.set_impedance_mode(mode='joint')
 
     # Cartesian space control (Teleop mode)

@@ -202,7 +202,7 @@ def generate_launch_description() -> LaunchDescription:
     print()
 
     ip = _get_local_ip()
-    print(f"  Robot IP: 192.168.1.190")
+    print(f"  Robot IP: 192.168.8.166")
     print(f"  Local IP: {ip}")
     print()
     print("  Please enter in the PICO headset XRoboToolkit App:")

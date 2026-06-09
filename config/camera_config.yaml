@@ -6,13 +6,13 @@ cameras:
   head:
     enabled: false
     type: d435i
-    serial_number: 254322070127
+    serial_number: 401622073401
     video_device: /dev/stereo_camera
     pixel_format: mjpeg2rgb
     io_method: mmap
     resolution:
-      width: 2560
-      height: 720
+      width: 480
+      height: 270
       fps: 60
     camera_name: cam_head
     streams:
@@ -39,9 +39,9 @@ cameras:
     pixel_format: mjpeg2rgb
     io_method: mmap
     resolution:
-      width: 848
-      height: 480
-      fps: 30
+      width: 480
+      height: 270
+      fps: 60
     camera_name: cam_left_wrist
     streams:
       enable_color: true
@@ -67,9 +67,9 @@ cameras:
     pixel_format: mjpeg2rgb
     io_method: mmap
     resolution:
-      width: 848
-      height: 480
-      fps: 30
+      width: 480
+      height: 270
+      fps: 60
     camera_name: cam_right_wrist
     streams:
       enable_color: true

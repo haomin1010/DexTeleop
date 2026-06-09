@@ -53,7 +53,7 @@ class TianjiArmControllerNode(Node):
 
     def __init__(
         self,
-        robot_ip: str = '192.168.1.190',
+        robot_ip: str = '192.168.8.166',
         dry_run: bool = False,
         read_only: bool = False,
         feedback_handshake: bool = False,
@@ -2792,7 +2792,7 @@ def main(argv: Optional[list[str]] = None):
     init_move_duration_sec = float(config.get("init_move_duration_sec", 3.0))
     teleop_active_sides = str(config.get("teleop_active_sides", "right"))
     node = TianjiArmControllerNode(
-        robot_ip=config.get("robot_ip", "192.168.1.190"),
+        robot_ip=config.get("robot_ip", "192.168.8.166"),
         dry_run=dry_run,
         read_only=read_only,
         feedback_handshake=feedback_handshake,

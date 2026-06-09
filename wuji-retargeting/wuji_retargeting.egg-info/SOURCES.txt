@@ -20,3 +20,5 @@ wuji_retargeting/viz/hud.py
 wuji_retargeting/viz/param_map.py
 wuji_retargeting/viz/skeleton_drawer.py
 wuji_retargeting/viz/tuning_viewer.py
+wuji_retargeting/wuji_hand_description/launch/display.left.py
+wuji_retargeting/wuji_hand_description/launch/display.right.py

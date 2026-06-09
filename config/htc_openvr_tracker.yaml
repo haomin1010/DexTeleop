@@ -2,9 +2,9 @@
 # Fill these values with your 5-tracker setup.
 tracker_serials:
   chest: "LHR-B6A245CD"
-  right_wrist: "LHR-76F8EF35"
-  # left_wrist: "LHR-XXXXXXXX"
-  # left_arm: "LHR-XXXXXXXX"
+  right_wrist: "LHR-95AAC8F8"
+  # left_wrist: "LHR-9125F96C"
+  # left_arm: "LHR-4DBBBA7C"
   right_arm: "LHR-4DC72746"
 
 # Wrist offset kept aligned with the current wuji-hand-teleop OpenVR config.

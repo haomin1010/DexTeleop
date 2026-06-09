@@ -36,7 +36,7 @@ class TianjiArmController:
 
     def __init__(
         self,
-        robot_ip='192.168.1.190',
+        robot_ip='192.168.8.166',
         config_path=None,
         logger=None,
         dry_run=False,

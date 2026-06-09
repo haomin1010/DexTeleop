@@ -549,9 +549,17 @@ class RosImageFrameRecorder:
     _active_topic: str | None = field(default=None, init=False)
     _started_unix: float | None = field(default=None, init=False)
     _last_frame_unix: float | None = field(default=None, init=False)
+    _last_log_unix: float | None = field(default=None, init=False)
+    _last_callback_unix: float | None = field(default=None, init=False)
+    _max_interval_ms: float = field(default=0.0, init=False)
+    _save_time_total_ms: float = field(default=0.0, init=False)
+    _save_time_max_ms: float = field(default=0.0, init=False)
+    _slow_save_count: int = field(default=0, init=False)
+    _long_gap_count: int = field(default=0, init=False)
 
     def start(self) -> None:
         self._started_unix = time.time()
+        self._last_log_unix = self._started_unix
         self.image_dir.mkdir(parents=True, exist_ok=True)
         self.frames_csv_path.parent.mkdir(parents=True, exist_ok=True)
         self._csv_fp = self.frames_csv_path.open("w", newline="", encoding="utf-8")
@@ -566,6 +574,11 @@ class RosImageFrameRecorder:
         self._executor = SingleThreadedExecutor()
         self._executor.add_node(self._node)
         self._subscribe()
+        print(
+            f"[camera-recorder:{self.name}] start topic={self.topic} "
+            f"fallbacks={self.fallback_topics} schema={self.schema} reliability={self.reliability}",
+            flush=True,
+        )
         self._thread = threading.Thread(target=self._spin, daemon=True)
         self._thread.start()
 
@@ -579,6 +592,15 @@ class RosImageFrameRecorder:
             self._node.destroy_node()
         if self._csv_fp is not None:
             self._csv_fp.close()
+        if self._frame_index:
+            avg_save_ms = self._save_time_total_ms / self._frame_index
+            print(
+                f"[camera-recorder:{self.name}] stop frames={self._frame_index} "
+                f"max_gap_ms={self._max_interval_ms:.1f} avg_save_ms={avg_save_ms:.1f} "
+                f"max_save_ms={self._save_time_max_ms:.1f} long_gaps={self._long_gap_count} "
+                f"slow_saves={self._slow_save_count}",
+                flush=True,
+            )
 
     def _subscribe(self) -> None:
         assert self._node is not None
@@ -664,6 +686,11 @@ class RosImageFrameRecorder:
             "image_dir": str(self.image_dir),
             "schema": self.schema,
             "reliability": self.reliability,
+            "max_interval_ms": round(self._max_interval_ms, 3),
+            "avg_save_ms": None if self._frame_index == 0 else round(self._save_time_total_ms / self._frame_index, 3),
+            "max_save_ms": round(self._save_time_max_ms, 3),
+            "long_gap_count": self._long_gap_count,
+            "slow_save_count": self._slow_save_count,
         }
 
     def _should_record_topic(self, source_topic: str) -> bool:
@@ -676,23 +703,78 @@ class RosImageFrameRecorder:
         if not self._should_record_topic(source_topic):
             return
         timestamp_unix = time.time()
+        self._record_callback_interval(timestamp_unix, source_topic)
         width = int(getattr(msg, "width", 0) or 0)
         height = int(getattr(msg, "height", 0) or 0)
         encoding = str(getattr(msg, "encoding", "") or "")
         suffix = self._image_suffix_for_encoding(encoding)
         image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}{suffix}"
+        save_start = time.perf_counter()
         self._save_raw_image(image_path, msg, encoding, width, height)
+        save_ms = (time.perf_counter() - save_start) * 1000.0
+        self._record_save_timing(save_ms, source_topic, image_path)
         self._write_frame_row(image_path, timestamp_unix, source_topic, encoding, width, height)
+        self._maybe_log_stats(timestamp_unix)
 
     def _compressed_cb(self, msg, source_topic: str):
         if not self._should_record_topic(source_topic):
             return
         timestamp_unix = time.time()
+        self._record_callback_interval(timestamp_unix, source_topic)
         fmt = str(getattr(msg, "format", "") or "jpg")
         suffix = ".jpg" if "jpg" in fmt.lower() or "jpeg" in fmt.lower() else ".png"
         image_path = self.image_dir / f"frame_{self._frame_index + 1:06d}{suffix}"
+        save_start = time.perf_counter()
         image_path.write_bytes(bytes(getattr(msg, "data", b"") or b""))
+        save_ms = (time.perf_counter() - save_start) * 1000.0
+        self._record_save_timing(save_ms, source_topic, image_path)
         self._write_frame_row(image_path, timestamp_unix, source_topic, "compressed", 0, 0, fmt)
+        self._maybe_log_stats(timestamp_unix)
+
+    def _record_callback_interval(self, timestamp_unix: float, source_topic: str) -> None:
+        if self._last_callback_unix is None:
+            self._last_callback_unix = timestamp_unix
+            return
+        interval_ms = (timestamp_unix - self._last_callback_unix) * 1000.0
+        self._last_callback_unix = timestamp_unix
+        self._max_interval_ms = max(self._max_interval_ms, interval_ms)
+        if interval_ms > 120.0:
+            self._long_gap_count += 1
+            print(
+                f"[camera-recorder:{self.name}] warning long_gap_ms={interval_ms:.1f} "
+                f"topic={source_topic} frame_next={self._frame_index + 1}",
+                flush=True,
+            )
+
+    def _record_save_timing(self, save_ms: float, source_topic: str, image_path: Path) -> None:
+        self._save_time_total_ms += save_ms
+        self._save_time_max_ms = max(self._save_time_max_ms, save_ms)
+        if save_ms > 50.0:
+            self._slow_save_count += 1
+            print(
+                f"[camera-recorder:{self.name}] warning slow_save_ms={save_ms:.1f} "
+                f"topic={source_topic} frame={self._frame_index + 1} path={image_path.name}",
+                flush=True,
+            )
+
+    def _maybe_log_stats(self, timestamp_unix: float) -> None:
+        if self._started_unix is None:
+            return
+        should_log_by_frames = self._frame_index > 0 and self._frame_index % 60 == 0
+        should_log_by_time = self._last_log_unix is None or (timestamp_unix - self._last_log_unix) >= 5.0
+        if not should_log_by_frames and not should_log_by_time:
+            return
+        elapsed = max(timestamp_unix - self._started_unix, 1e-6)
+        avg_fps = self._frame_index / elapsed
+        avg_save_ms = self._save_time_total_ms / max(self._frame_index, 1)
+        print(
+            f"[camera-recorder:{self.name}] stats frames={self._frame_index} "
+            f"avg_fps={avg_fps:.2f} max_gap_ms={self._max_interval_ms:.1f} "
+            f"avg_save_ms={avg_save_ms:.1f} max_save_ms={self._save_time_max_ms:.1f} "
+            f"long_gaps={self._long_gap_count} slow_saves={self._slow_save_count}",
+            flush=True,
+        )
+        self._last_log_unix = timestamp_unix
 
     def _save_raw_image(self, image_path: Path, msg, encoding: str, width: int, height: int) -> None:
         data = bytes(getattr(msg, "data", b"") or b"")
