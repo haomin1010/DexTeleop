@@ -1,0 +1,9 @@
+# motion_log (post-hoc from user description + main.log TRACKER_ORI timing)
+# Re-run with: ./scripts/tianji_motion_stamp.sh wuji22-hand:<dir> <step> <label>
+posthoc t=1780128016.786 step=0 label=zero_hold user=tracker_zero_initialized
+posthoc t=1780128017.796 step=1 label=pitch_small user=blended_delta~0.7-4deg
+posthoc t=1780128024.834 step=2 label=pitch_large user=blended_delta~22deg
+posthoc t=1780128029.864 step=3 label=yaw_small user=blended_delta~3-28deg
+posthoc t=1780128031.874 step=4 label=yaw_large user=blended_delta~85-101deg
+posthoc t=1780128043.964 step=5 label=roll_small user=blended_delta~82-92deg
+posthoc t=1780128056.014 step=6 label=roll_large user=blended_delta~77-145deg RIGHT_IK_FAIL@8040

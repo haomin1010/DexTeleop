@@ -12,6 +12,7 @@ prepare_container_workspace() {
     container_parent="$(dirname "$CONTAINER_WORKDIR")"
     echo "[dexproj] syncing DexProj workspace into container '$CONTAINER_NAME'..." >&2
     docker exec "$CONTAINER_NAME" mkdir -p "$container_parent"
+    docker exec "$CONTAINER_NAME" rm -rf "$CONTAINER_WORKDIR"
     docker cp "$ROOT_DIR/." "$CONTAINER_NAME:$CONTAINER_WORKDIR"
 }
 

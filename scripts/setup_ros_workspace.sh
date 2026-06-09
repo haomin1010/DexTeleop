@@ -35,6 +35,7 @@ fi
 
 echo "[dexproj] syncing DexProj workspace into container '$CONTAINER_NAME'..."
 docker exec "$CONTAINER_NAME" mkdir -p "$(dirname "$CONTAINER_WORKDIR")"
+docker exec "$CONTAINER_NAME" rm -rf "$CONTAINER_WORKDIR"
 docker cp "$ROOT_DIR/." "$CONTAINER_NAME:$CONTAINER_WORKDIR"
 
 if ! docker exec "$CONTAINER_NAME" bash -lc 'command -v colcon >/dev/null 2>&1'; then

@@ -36,6 +36,12 @@ class BringupConfig:
     enable_arm: bool = True
     hand_input: str = "wuji_glove"
     arm_input: str = "tracker"
+    arm_controller_config: str = ""
+    arm_dry_run: bool = False
+    arm_read_only: bool = False
+    arm_feedback_handshake: bool = False
+    arm_sdk_executor_enable: bool = False
+    arm_sim_viz: bool = False
 
     @classmethod
     def from_yaml(cls, path: Path) -> "BringupConfig":
@@ -52,6 +58,12 @@ class BringupConfig:
             enable_arm=bool(raw.get("enable_arm", True)),
             hand_input=str(raw.get("hand_input", "wuji_glove")),
             arm_input=str(raw.get("arm_input", "tracker")),
+            arm_controller_config=str(raw.get("arm_controller_config", "")),
+            arm_dry_run=bool(raw.get("arm_dry_run", False)),
+            arm_read_only=bool(raw.get("arm_read_only", False)),
+            arm_feedback_handshake=bool(raw.get("arm_feedback_handshake", False)),
+            arm_sdk_executor_enable=bool(raw.get("arm_sdk_executor_enable", False)),
+            arm_sim_viz=bool(raw.get("arm_sim_viz", False)),
         )
 
 
@@ -154,6 +166,18 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
 
     if config.enable_arm:
         extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
+        if launch_file == "wuji_teleop_single.launch.py":
+            if config.arm_controller_config:
+                extra_args.append(f"controller_config:={config.arm_controller_config}")
+            extra_args.extend(
+                [
+                    f"dry_run:={'true' if config.arm_dry_run else 'false'}",
+                    f"read_only:={'true' if config.arm_read_only else 'false'}",
+                    f"feedback_handshake:={'true' if config.arm_feedback_handshake else 'false'}",
+                    f"sdk_executor_enable:={'true' if config.arm_sdk_executor_enable else 'false'}",
+                    f"sim_viz:={'true' if config.arm_sim_viz else 'false'}",
+                ]
+            )
 
     return [
         "ros2",
@@ -166,8 +190,10 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
 
 def apply_hand_teleop_overrides(command: list[str], hand_cfg: HandTeleopConfig, run_mode: str) -> list[str]:
     updated = list(command)
+    include_left = run_mode != "single_right"
+    include_right = run_mode != "single_left"
 
-    if hand_cfg.left is not None:
+    if include_left and hand_cfg.left is not None:
         updated.extend(
             [
                 f"left_serial:={hand_cfg.left.hand_sn}",
@@ -180,7 +206,7 @@ def apply_hand_teleop_overrides(command: list[str], hand_cfg: HandTeleopConfig, 
     else:
         updated.append("include_left_hand:=false")
 
-    if hand_cfg.right is not None:
+    if include_right and hand_cfg.right is not None:
         updated.extend(
             [
                 f"right_serial:={hand_cfg.right.hand_sn}",
@@ -192,11 +218,6 @@ def apply_hand_teleop_overrides(command: list[str], hand_cfg: HandTeleopConfig, 
             updated.append(f"right_retarget_config:={hand_cfg.right.retarget_config}")
     else:
         updated.append("include_right_hand:=false")
-
-    if run_mode == "single_left":
-        updated.append("include_right_hand:=false")
-    elif run_mode == "single_right":
-        updated.append("include_left_hand:=false")
 
     return updated
 

@@ -1,9 +1,17 @@
 # DexProj main bringup config.
 # This repository currently supports HTC/OpenVR as the only arm teleop route.
 
-mode: dual
+mode: single_right
 enable_camera: false
-enable_rviz: false
+enable_rviz: true
 
 hand_input: wuji_glove
 arm_input: tracker
+
+# Match scripts/run_tianji_real_teleop.sh for the Tianji arm path.
+arm_controller_config: /workspace/DexProj/wuji-hand-teleop/src/output_devices/tianji_output/tianji_output/config/tianji_output_real_teleop.yaml
+arm_dry_run: true
+arm_read_only: false
+arm_feedback_handshake: false
+arm_sdk_executor_enable: true
+arm_sim_viz: true

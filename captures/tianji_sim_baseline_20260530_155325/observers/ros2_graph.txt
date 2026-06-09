@@ -1,0 +1,32 @@
+=== ros2 node list ===
+/left_chest_base_tf
+/left_chest_tf
+/openvr_input
+/right_chest_base_tf
+/right_chest_tf
+/rosbag2_recorder
+/rviz2
+/tf2_echo
+/tianji_arm_controller
+/tianji_left_tf
+/tianji_mujoco_viewer
+/tianji_right_tf
+/tianji_tracker_sim_viz
+/transform_listener_impl_595fa9506060
+/transform_listener_impl_5af0b49c7b20
+
+=== ros2 topic list ===
+/events/write_split
+/parameter_events
+/rosout
+/tf
+/tf_static
+/tianji_arm/left/joint_command
+/tianji_arm/left/joint_state
+/tianji_arm/left/left_ee_pose
+/tianji_arm/left/left_zsp_para
+/tianji_arm/right/joint_command
+/tianji_arm/right/joint_state
+/tianji_arm/right/right_ee_pose
+/tianji_arm/right/right_zsp_para
+/tianji_tracker_sim/markers
