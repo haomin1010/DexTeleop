@@ -1,4 +1,4 @@
-mode: single_right
+mode: dual
 
 bringup_config: config/bringup_htc.yaml
 hand_teleop_config: config/hand_teleop_wuji_glove.yaml

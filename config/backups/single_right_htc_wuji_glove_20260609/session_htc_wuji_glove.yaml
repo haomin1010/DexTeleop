@@ -1,0 +1,14 @@
+mode: single_right
+
+bringup_config: config/bringup_htc.yaml
+hand_teleop_config: config/hand_teleop_wuji_glove.yaml
+openvr_config: wuji-hand-teleop/src/input_devices/openvr_input/config/openvr_input.yaml
+camera_config: config/camera_config.yaml
+enable_camera: true
+
+trigger:
+  trigger_mode: both
+  gamepad_start: [lb, rb]
+  gamepad_stop: [start]
+  keyboard_start: B
+  keyboard_stop: E

@@ -1,0 +1,33 @@
+<?xml version="1.0"?>
+<?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
+<package format="3">
+  <name>wuji_teleop_bringup</name>
+  <version>0.1.0</version>
+  <description>
+    Launch files for Wuji Hand and Tianji Arm teleoperation system.
+  </description>
+  <maintainer email="support@wuji.tech">Wuji Tech</maintainer>
+  <license>MIT</license>
+
+  <buildtool_depend>ament_python</buildtool_depend>
+
+  <exec_depend>rclpy</exec_depend>
+  <exec_depend>launch</exec_depend>
+  <exec_depend>launch_ros</exec_depend>
+  <exec_depend>tf2_ros</exec_depend>
+  <exec_depend>robot_state_publisher</exec_depend>
+  <exec_depend>tianji_urdf</exec_depend>
+
+  <!-- Core packages used by the default Wuji glove hand bringup. -->
+  <exec_depend>wujihand_output</exec_depend>
+  <exec_depend>wuji_glove_input_py</exec_depend>
+  <exec_depend>controller</exec_depend>
+
+  <!-- Optional launch-time packages such as camera/manus/openvr/tianji are
+       intentionally not hard dependencies so hand-only bringup can build in
+       minimal containers. -->
+
+  <export>
+    <build_type>ament_python</build_type>
+  </export>
+</package>

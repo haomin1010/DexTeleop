@@ -1,0 +1,148 @@
+# Tianji Arm Output Configuration
+#
+# Working SIM profile (verified 2026-05-30). Frozen copy: tianji_output_sim.yaml
+#   read_only + use_pinocchio_ik: false + mapped_tf → TJ SDK [READ_ONLY_POSE]
+# Launch: read_only:=true feedback_handshake:=true sim_viz:=true enable_mujoco:=true
+
+# Robot IP address
+robot_ip: "192.168.8.166"
+
+# If true, compute and print target joint commands without connecting to the robot.
+dry_run: false
+
+# If true, connect to the robot for feedback only and never send robot commands.
+read_only: true
+
+# If true with read_only, send one non-motion SDK command sequence at startup so
+# the robot begins publishing feedback frames for /joint_state and simulation.
+feedback_handshake: true
+
+# In read_only mode, do not let a stuck SDK connect block tracker/MuJoCo sim forever.
+# Set <= 0 to wait indefinitely for physical robot feedback.
+read_only_connect_timeout: 3.0
+
+# Tracker arm IK strategy:
+use_pinocchio_ik: false
+
+# If empty, the node tries tianji_urdf/urdf/right.urdf.
+pinocchio_urdf_path: ""
+# Current exported tianji_urdf/right.urdf exposes Link7_R as the distal frame.
+pinocchio_right_ee_frame: "Link7_R"
+pinocchio_left_ee_frame: "Link7_R"
+ik_frame_scan_debug: false
+
+# Tianji SDK joint unit. Change to "rad" only if get_current_joints() returns radians.
+motor_unit: "deg"
+
+tracker_mode: "incremental"
+tracker_position_scale: 1.2
+tracker_position_scale_x: 1.2
+tracker_position_scale_y: 1.2
+tracker_position_scale_z: 1.2
+# In absolute tracker mode this must stay disabled; a spherical radius limit is
+# measured around the chest-frame origin and can collapse reachable targets into
+# an unreachable 20cm shell.
+tracker_position_limit_m: 0.0
+tracker_position_max_x_m: 1.5
+tracker_position_min_y_m: -1.2
+tracker_position_max_y_m: 1.2
+tracker_position_min_z_m: -1.2
+tracker_position_max_z_m: 1.2
+# tracker_position_limit_m: 0.68
+# tracker_position_max_x_m: 1.0
+# tracker_position_min_y_m: -0.38
+# tracker_position_max_y_m: 0.38
+# tracker_position_min_z_m: -0.05
+# tracker_position_max_z_m: 0.55
+control_rate_hz: 100.0
+
+# full_pose orientation mapping
+# Maps tracker wrist local rotation axes into robot EE local rotation axes.
+# Used as: mapped_delta_R = R_map @ tracker_delta_R @ R_map.T
+tracker_orientation_input_mode: "mapped_tf"
+# options:
+#   mapped_tf: old scheme A. Orientation uses tianji_right / tianji_left.
+#   raw_wrist: new scheme B. Position uses tianji_right / tianji_left, orientation uses raw wrist tracker.
+tracker_orientation_source_frame_right: "right_wrist"
+tracker_orientation_source_frame_left: "left_wrist"
+
+tracker_orientation_map_mode: "matrix"
+# Candidate R_map converted from calibrated wrist_orientation_axis_basis.T.
+# This is for Pinocchio full_pose, not wrist_only.
+tracker_orientation_map_matrix:
+  - [-0.08234819, 0.98106012, 0.17532772]
+  - [-0.98504047, -0.10684454, 0.13520175]
+  - [0.15137385, -0.16157129, 0.97518238]
+
+# Scheme B test values:
+# tracker_orientation_input_mode: "raw_wrist"
+# tracker_orientation_map_mode: "matrix"
+# tracker_orientation_map_matrix:
+#   - [0.0,  0.0, -1.0]
+#   - [-1.0, 0.0,  0.0]
+#   - [0.0,  1.0,  0.0]
+
+tracker_orientation_mode: "full_pose"
+ik_reference_mode: "last_success"
+tracker_orientation_filter_alpha: 0.35
+tracker_orientation_max_step_deg: 12.0
+tracker_orientation_blend: 1.0
+tracker_orientation_debug: true
+
+# SETC: Stable EE Teleop Control
+# Keep wrist-local diagnostics, but do not use hard switch hold.
+tracker_wrist_local_enable: false
+tracker_wrist_local_hold_position: false
+tracker_wrist_local_hold_position_mode: "last_target"
+tracker_wrist_local_debug: false
+tracker_wrist_local_pos_threshold_m: 0.025
+tracker_wrist_local_rot_threshold_deg: 5.0
+
+# New: continuous weighted position blend
+tracker_wrist_local_position_blend_enable: false
+tracker_wrist_local_weight_filter_alpha: 0.85
+tracker_wrist_local_pos_start_m: 0.015
+tracker_wrist_local_pos_full_m: 0.055
+tracker_wrist_local_rot_start_deg: 3.0
+tracker_wrist_local_rot_full_deg: 12.0
+
+workspace_min_x_m: -0.20
+workspace_max_x_m: 0.75
+workspace_min_y_m: -0.9
+workspace_max_y_m: 0.9
+workspace_min_z_m: -0.9
+workspace_max_z_m: 0.90
+workspace_min_radius_m: 0.22
+workspace_max_radius_m: 0.80
+
+ik_max_iters: 30
+ik_dt: 0.5
+ik_pos_eps_m: 0.005
+ik_ori_eps_rad: 0.08
+ik_position_weight: 1.0
+ik_orientation_weight: 0.05
+ik_orientation_weight_near_singularity: 0.01
+ik_base_damping: 1e-4
+ik_max_damping: 5e-2
+ik_max_dq_step_deg: 3.0
+
+singularity_sigma_min_warn: 0.04
+singularity_sigma_min_critical: 0.015
+singularity_condition_warn: 80.0
+singularity_condition_critical: 200.0
+                                 
+max_joint_step_deg: 2.5
+
+# Legacy/debug only. Not used when tracker_orientation_mode == "full_pose".
+wrist_orientation_scale: 1.0
+wrist_orientation_scale_x: 1.0
+wrist_orientation_scale_y: 1.0
+wrist_orientation_scale_z: 1.0
+wrist_orientation_axis_order: "zxy"
+wrist_orientation_decompose: "rotvec"
+wrist_orientation_axis_basis:
+  x: [-0.08234819, -0.98504047, 0.15137385]
+  y: [0.98106012, -0.10684454, -0.16157129]
+  z: [0.17532772, 0.13520175, 0.97518238]
+wrist_orientation_max_deg: 35.0
+tracker_start_delay_sec: 2.0

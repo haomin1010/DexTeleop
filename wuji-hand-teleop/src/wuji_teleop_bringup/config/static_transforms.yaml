@@ -1,0 +1,56 @@
+# Chest Mount TF Configuration
+# TF structure: chest -> {side}_chest_base (shared + rotation) -> {side}_chest (local)
+#
+# Bilateral mirror convention (body midline = chest Y axis, robot facing +X):
+#   chest_mount.{side}.yaw:  left = -right   (roll/pitch stay equal)
+#   chest_mount.{side}.local_y:  left = -right   (when non-zero lateral offset)
+#   wrist_to_tianji.{side}.y:    left = -right
+#   wrist_to_tianji.{side}.z:    left = -right   (when non-zero; both zero here)
+#   wrist_to_tianji quaternion:  (qx, -qy, -qz, qw) mirrored from right
+#
+# shared translation is identical for both sides; side rotation places left/right frames.
+
+chest_mount:
+  # Shared translation in chest frame (same anchor for both shoulders)
+  shared:
+    x: 0.0
+    y: -0.2
+    z: 0.12
+
+  left:
+    # Mirror of right: yaw negated (roll/pitch unchanged)
+    roll: 1.5708
+    pitch: 0.0
+    yaw: -1.5708
+    local_x: 0.0
+    local_y: 0.0
+    local_z: 0.037
+
+  right:
+    roll: 1.5708
+    pitch: 0.0
+    yaw: 1.5708
+    local_x: 0.0
+    local_y: 0.0
+    local_z: 0.037
+
+# Wrist tracker frame -> Tianji TCP target frame (right_wrist->tianji_right, etc.)
+wrist_to_tianji:
+  left:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    # Mirror of right quaternion: negate qy and qz
+    qx: 0.5
+    qy: 0.5
+    qz: 0.5
+    qw: 0.5
+
+  right:
+    x: 0.0
+    y: 0.0
+    z: 0.0
+    qx: 0.5
+    qy: -0.5
+    qz: -0.5
+    qw: 0.5

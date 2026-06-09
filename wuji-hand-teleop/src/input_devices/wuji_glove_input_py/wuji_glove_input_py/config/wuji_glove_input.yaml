@@ -1,0 +1,13 @@
+# Configuration for the wuji_glove_input ROS2 node (Wuji Glove -> /hand_input)
+
+publish_rate_hz: 50.0
+publish_hand_topic: /hand_input
+
+include_right_hand: true
+include_left_hand: true
+
+left_glove_sn: null
+right_glove_sn: null
+
+left_device_name: glove_left
+right_device_name: glove_right

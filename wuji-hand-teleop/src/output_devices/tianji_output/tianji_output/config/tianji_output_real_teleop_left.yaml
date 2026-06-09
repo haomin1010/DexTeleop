@@ -1,0 +1,114 @@
+# Real-robot teleop — left arm only (same SDK flow as right).
+# Launch: ./scripts/run_tianji_real_teleop_left.sh
+
+robot_ip: "192.168.8.166"
+
+dry_run: false
+read_only: false
+feedback_handshake: false
+read_only_connect_timeout: 3.0
+
+use_pinocchio_ik: false
+
+pinocchio_urdf_path: ""
+pinocchio_right_ee_frame: "Link7_R"
+pinocchio_left_ee_frame: "Link7_L"
+ik_frame_scan_debug: false
+
+motor_unit: "deg"
+
+tracker_mode: "incremental"
+tracker_position_scale: 0.65
+tracker_position_scale_x: 1.0
+tracker_position_scale_y: 0.8
+tracker_position_scale_z: 0.8
+tracker_position_limit_m: 0.0
+tracker_position_max_x_m: 1.5
+tracker_position_min_y_m: -0.7
+tracker_position_max_y_m: 0.7
+tracker_position_min_z_m: -0.05
+tracker_position_max_z_m: 0.7
+control_rate_hz: 100.0
+
+tracker_orientation_input_mode: "mapped_tf"
+tracker_orientation_source_frame_right: "right_wrist"
+tracker_orientation_source_frame_left: "left_wrist"
+
+tracker_orientation_map_mode: "matrix"
+tracker_orientation_map_matrix:
+  - [-0.08234819, -0.98106012, 0.17532772]
+  - [0.98504047, -0.10684454, -0.13520175]
+  - [0.15137385, 0.16157129, 0.97518238]
+
+tracker_orientation_mode: "full_pose"
+ik_reference_mode: "last_success"
+tracker_orientation_filter_alpha: 0.35
+tracker_orientation_max_step_deg: 12.0
+tracker_orientation_blend: 1.0
+tracker_orientation_debug: true
+
+tracker_wrist_local_enable: false
+tracker_wrist_local_hold_position: false
+tracker_wrist_local_hold_position_mode: "last_target"
+tracker_wrist_local_debug: false
+tracker_wrist_local_pos_threshold_m: 0.025
+tracker_wrist_local_rot_threshold_deg: 5.0
+
+tracker_wrist_local_position_blend_enable: false
+tracker_wrist_local_weight_filter_alpha: 0.85
+tracker_wrist_local_pos_start_m: 0.015
+tracker_wrist_local_pos_full_m: 0.055
+tracker_wrist_local_rot_start_deg: 3.0
+tracker_wrist_local_rot_full_deg: 12.0
+
+workspace_min_x_m: 0.20
+workspace_max_x_m: 0.75
+workspace_min_y_m: -0.45
+workspace_max_y_m: 0.45
+workspace_min_z_m: 0.05
+workspace_max_z_m: 0.70
+workspace_min_radius_m: 0.22
+workspace_max_radius_m: 0.80
+
+ik_max_iters: 30
+ik_dt: 0.5
+ik_pos_eps_m: 0.005
+ik_ori_eps_rad: 0.08
+ik_position_weight: 1.0
+ik_orientation_weight: 0.05
+ik_orientation_weight_near_singularity: 0.01
+ik_base_damping: 1e-4
+ik_max_damping: 5e-2
+ik_max_dq_step_deg: 3.0
+
+singularity_sigma_min_warn: 0.04
+singularity_sigma_min_critical: 0.015
+singularity_condition_warn: 80.0
+singularity_condition_critical: 200.0
+
+max_joint_step_deg: 2.5
+
+wrist_orientation_scale: 0.5
+wrist_orientation_scale_x: 1.0
+wrist_orientation_scale_y: 1.0
+wrist_orientation_scale_z: 1.0
+wrist_orientation_axis_order: "zxy"
+wrist_orientation_decompose: "rotvec"
+wrist_orientation_axis_basis:
+  x: [-0.08234819, 0.98504047, 0.15137385]
+  y: [0.98106012, 0.10684454, -0.16157129]
+  z: [0.17532772, -0.13520175, 0.97518238]
+wrist_orientation_max_deg: 35.0
+tracker_start_delay_sec: 0.0
+
+keyboard_teleop_gate: true
+keyboard_start_key: B
+keyboard_stop_key: E
+keyboard_start_align_sec: 3.0
+keyboard_align_max_ik_delta_deg: 50.0
+teleop_ik_max_step_deg: 10.0
+keyboard_zero_warmup_cycles: 0
+teleop_ik_grace_cycles: 0
+init_move_sides: left
+init_move_duration_sec: 3.0
+teleop_active_sides: left
