@@ -204,6 +204,9 @@ def main() -> int:
     print(f"[change_wuji_glove_ip] setting glove port to {args.new_port}...")
     glove.port().set(args.new_port)
 
+    print("[change_wuji_glove_ip] flushing device params to persistent storage...")
+    glove.save_params()
+
     print("[change_wuji_glove_ip] write complete.")
     print("[change_wuji_glove_ip] If the glove disconnects, rescan/connect at the new address:")
     print(f"  {args.new_ip}:{args.new_port}")

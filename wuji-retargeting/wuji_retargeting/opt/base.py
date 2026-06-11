@@ -193,6 +193,10 @@ class BaseOptimizer(ABC):
 
         # Load URDF
         urdf_path = str((_PACKAGE_ROOT / f"wuji_hand_description/urdf/{self.hand_side}.urdf").resolve())
+        print(
+            f"[retarget] optimizer loading default URDF for {self.hand_side}: {urdf_path}",
+            flush=True,
+        )
         self.robot = RobotWrapper(urdf_path, hand_side=self.hand_side)
         self.num_joints = self.robot.model.nq
 

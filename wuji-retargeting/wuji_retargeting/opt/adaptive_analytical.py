@@ -119,6 +119,10 @@ class AdaptiveOptimizerAnalytical(BaseOptimizer):
             if not urdf_path.exists():
                 raise FileNotFoundError(f"optimizer.urdf_path not found: {urdf_path}")
 
+            print(
+                f"[retarget] optimizer overriding URDF for {self.hand_side}: {urdf_path}",
+                flush=True,
+            )
             self.robot = RobotWrapper(str(urdf_path), hand_side=self.hand_side)
             if self.robot.model.nq != self.num_joints:
                 raise RuntimeError(

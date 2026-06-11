@@ -138,7 +138,6 @@ def create_realsense_camera(
         'enable_gyro': enable_gyro,
         'enable_accel': enable_accel,
         'depth_module.depth_profile': f'{width}x{height}x{fps}',
-        'rgb_camera.color_profile': f'{width}x{height}x{fps}',
         'depth_module.inter_cam_sync_mode': sync_mode,
         'rgb_camera.color_image_transport': 'raw',
         'depth_module.depth_image_transport': 'raw',
@@ -146,10 +145,13 @@ def create_realsense_camera(
         'reconnect_timeout': '6.0',
     }
     if cam_type == 'd405':
+        # D405 color stream is configured under depth_module.* in realsense2_camera.
+        launch_arguments['depth_module.color_profile'] = f'{width}x{height}x{fps}'
         launch_arguments['depth_module.enable_auto_exposure'] = enable_auto_exposure
         launch_arguments['depth_module.exposure'] = exposure
         launch_arguments['depth_module.gain'] = gain
     else:
+        launch_arguments['rgb_camera.color_profile'] = f'{width}x{height}x{fps}'
         launch_arguments['rgb_camera.enable_auto_exposure'] = enable_auto_exposure
         launch_arguments['rgb_camera.exposure'] = exposure
         launch_arguments['rgb_camera.gain'] = gain

@@ -14,6 +14,7 @@ try:
     import openvr
     OPENVR_AVAILABLE = True
 except ImportError:
+    openvr = None
     OPENVR_AVAILABLE = False
 
 
@@ -45,8 +46,10 @@ class OpenVRTrackerWrapper:
     Args:
         tracker_serials: Dictionary mapping roles to tracker serial numbers
                         e.g., {'chest': 'LHR-xxx', 'right_wrist': 'LHR-yyy', 'left_wrist': 'LHR-zzz'}
-        wrist_offset: Optional offset [x, y, z] in tracker's local frame (meters).
+        wrist_offset: Optional shared offset [x, y, z] in tracker's local frame (meters).
                      Applied before coordinate correction to map tracker position to wrist.
+        left_wrist_offset/right_wrist_offset: Optional side-specific offsets that
+                     override wrist_offset for that wrist.
 
     Example:
         >>> wrapper = OpenVRTrackerWrapper({
@@ -83,10 +86,28 @@ class OpenVRTrackerWrapper:
         [0, 0, 0, 1]
     ], dtype=np.float32)
 
-    def __init__(self, tracker_serials: Dict[str, str], wrist_offset: Optional[list] = None):
+    def __init__(
+        self,
+        tracker_serials: Dict[str, str],
+        wrist_offset: Optional[list] = None,
+        left_wrist_offset: Optional[list] = None,
+        right_wrist_offset: Optional[list] = None,
+    ):
         ## YOU HAVE TO RUN STEAMVR FIRST
         self.tracker_serials = tracker_serials
         self._wrist_offset = np.array(wrist_offset, dtype=np.float32) if wrist_offset else None
+        self._wrist_offsets = {
+            "left_wrist": (
+                np.array(left_wrist_offset, dtype=np.float32)
+                if left_wrist_offset is not None
+                else self._wrist_offset
+            ),
+            "right_wrist": (
+                np.array(right_wrist_offset, dtype=np.float32)
+                if right_wrist_offset is not None
+                else self._wrist_offset
+            ),
+        }
         self._vr_system: Optional[openvr.VRSystem] = None
         self._is_connected = False
         self._detected_trackers: Dict[int, str] = {}  # device_index -> role
@@ -102,6 +123,11 @@ class OpenVRTrackerWrapper:
 
     def _connect(self):
         """Establish connection to OpenVR system."""
+        if not OPENVR_AVAILABLE or openvr is None:
+            raise ImportError(
+                "Python package 'openvr' is not available. "
+                "Run this node with the dexproj conda environment."
+            )
         try:
             print("Initializing OpenVR...")
             openvr.init(openvr.VRApplication_Other)
@@ -248,10 +274,11 @@ class OpenVRTrackerWrapper:
 
             if raw_pose is not None:
                 # Apply wrist offset before coordinate correction (for wrist trackers only)
-                if role in ('right_wrist', 'left_wrist') and self._wrist_offset is not None:
+                wrist_offset = self._wrist_offsets.get(role)
+                if role in ('right_wrist', 'left_wrist') and wrist_offset is not None:
                     # Convert local offset to world frame and apply
                     rotation = raw_pose[:3, :3]
-                    world_offset = rotation @ self._wrist_offset
+                    world_offset = rotation @ wrist_offset
                     raw_pose[:3, 3] += world_offset
 
                 # Apply coordinate correction based on role

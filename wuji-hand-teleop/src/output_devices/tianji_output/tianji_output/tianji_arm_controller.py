@@ -36,7 +36,7 @@ class TianjiArmController:
 
     def __init__(
         self,
-        robot_ip='192.168.8.166',
+        robot_ip='192.168.1.190',
         config_path=None,
         logger=None,
         dry_run=False,
@@ -313,13 +313,16 @@ class TianjiArmController:
             Ixx~Izz: inertia tensor (kg·mm²)
         """
         tool_kine = [0, 0, 120, 0, 0, 0]  # Tool center point 120mm from flange
-        tool_dyn = [0.874014, -24.586772, -39.924666, 232.723684, 0.003369, 0.0, 0.0, 0.001, 0.0, 0.009483]
+        tool_dyn_A =[0.835050, 34.294732, 34.223124, 214.470989, 0.016921, 0.000000, 0.000000, 0.001000, 0.000000, 0.005474]
+        tool_dyn_B = [0.874014, -24.586772, -39.924666, 232.723684, 0.003369, 0.0, 0.0, 0.001, 0.0, 0.009483]
 
-        self.logger.debug(f"Setting tool parameters: kine={tool_kine}, dyn={tool_dyn}")
+        self.logger.debug(
+            f"Setting tool parameters: kine={tool_kine}, dyn_A={tool_dyn_A}, dyn_B={tool_dyn_B}"
+        )
 
         self.robot.clear_set()
-        self.robot.set_tool(arm='A', kineParams=tool_kine, dynamicParams=tool_dyn)
-        self.robot.set_tool(arm='B', kineParams=tool_kine, dynamicParams=tool_dyn)
+        self.robot.set_tool(arm='A', kineParams=tool_kine, dynamicParams=tool_dyn_A)
+        self.robot.set_tool(arm='B', kineParams=tool_kine, dynamicParams=tool_dyn_B)
         self.robot.send_cmd()
         time.sleep(0.3)
 

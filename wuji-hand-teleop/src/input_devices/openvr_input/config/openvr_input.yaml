@@ -8,8 +8,8 @@
 tracker_serials:
   chest: "LHR-53CD4F24"
   right_wrist: "LHR-95AAC8F8"
-  # left_wrist: "LHR-XXXXXXXX"
-  # left_arm: "LHR-XXXXXXXX"
+  left_wrist: "LHR-9125F96C"
+  left_arm: "LHR-4DBBBA7C"
   right_arm: "LHR-F27E676D"
 
   # head: "LHR-XXXXXXXX"           # Head
@@ -21,7 +21,9 @@ tracker_serials:
 # wrist_offset: [0.0, 0.04, 0.05]
 
 # For human data record system, the trackers are replaced
-wrist_offset: [0.04, -0.0275, 0.17]
+wrist_offset: [0.1, 0.0275, 0.17]
+left_wrist_offset: [0, 0,  0]
+right_wrist_offset: [0.1, -0.0275, 0.17]
 # 0.1, -0.0275, 0.17
 # Publishing settings
 publish_rate_hz: 120.0
@@ -32,4 +34,4 @@ parent_frame: "world"
 
 # Chest to head offset (meters)
 # The chest tracker is worn at chest level, we need to add 0.3m to get head position
-chest_to_head_offset_z: 0.4
+chest_to_head_offset_z: 0.2

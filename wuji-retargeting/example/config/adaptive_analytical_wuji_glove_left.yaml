@@ -23,9 +23,9 @@ retarget:
   lp_alpha: 0.2
 
   segment_scaling:
-    thumb:  [1.0, 1.0, 1.0]
-    index:  [1.0, 1.0, 1.0]
-    middle: [1.0, 1.0, 1.0]
+    thumb:  [1.05, 1.05, 1.05]
+    index:  [1.15, 1.15, 1.15]
+    middle: [1.05, 1.05, 1.05]
     ring:   [1.0, 1.0, 1.0]
     pinky:  [1.05, 1.0, 1.1]
 

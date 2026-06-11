@@ -44,6 +44,10 @@ ARM_SWITCH_MODE_SERVICE = "/tianji_arm/switch_mode"
 ARM_START_TELEOP_SERVICE = "/tianji_arm/start_teleop"
 ARM_STOP_TELEOP_SERVICE = "/tianji_arm/stop_teleop"
 ARM_READY_TIMEOUT_SEC = 30.0
+ARM_COMMAND_TOPICS = (
+    "/tianji_arm/left/joint_command",
+    "/tianji_arm/right/joint_command",
+)
 ARM_LOG_FAILURE_MARKERS = (
     "[ERROR] [tianji_arm_controller",
     "ModuleNotFoundError:",
@@ -95,7 +99,8 @@ class SessionConfig:
     openvr_config: str
     camera_config: str
     enable_camera: bool
-    trigger: TriggerConfig
+    teleop_trigger: TriggerConfig
+    record_trigger: TriggerConfig
 
     @classmethod
     def from_yaml(cls, path: Path) -> "SessionConfig":
@@ -110,6 +115,43 @@ class SessionConfig:
         if not isinstance(trigger_raw, dict):
             trigger_raw = {}
 
+        if "teleop" in trigger_raw or "record" in trigger_raw:
+            teleop_raw = trigger_raw.get("teleop", {})
+            record_raw = trigger_raw.get("record", {})
+            if not isinstance(teleop_raw, dict):
+                teleop_raw = {}
+            if not isinstance(record_raw, dict):
+                record_raw = {}
+            teleop_trigger = TriggerConfig(
+                trigger_mode=str(teleop_raw.get("trigger_mode", "keyboard")),
+                gamepad_start=list(teleop_raw.get("gamepad_start", ["lb", "rb"])),
+                gamepad_stop=list(teleop_raw.get("gamepad_stop", ["start"])),
+                keyboard_start=str(teleop_raw.get("keyboard_start", "B")),
+                keyboard_stop=str(teleop_raw.get("keyboard_stop", "E")),
+            )
+            record_trigger = TriggerConfig(
+                trigger_mode=str(record_raw.get("trigger_mode", "keyboard")),
+                gamepad_start=list(record_raw.get("gamepad_start", ["lb", "rb"])),
+                gamepad_stop=list(record_raw.get("gamepad_stop", ["start"])),
+                keyboard_start=str(record_raw.get("keyboard_start", "S")),
+                keyboard_stop=str(record_raw.get("keyboard_stop", "D")),
+            )
+        else:
+            teleop_trigger = TriggerConfig(
+                trigger_mode=str(trigger_raw.get("trigger_mode", "both")),
+                gamepad_start=list(trigger_raw.get("gamepad_start", ["lb", "rb"])),
+                gamepad_stop=list(trigger_raw.get("gamepad_stop", ["start"])),
+                keyboard_start=str(trigger_raw.get("keyboard_start", "B")),
+                keyboard_stop=str(trigger_raw.get("keyboard_stop", "E")),
+            )
+            record_trigger = TriggerConfig(
+                trigger_mode=str(trigger_raw.get("trigger_mode", "keyboard")),
+                gamepad_start=list(trigger_raw.get("gamepad_start", ["lb", "rb"])),
+                gamepad_stop=list(trigger_raw.get("gamepad_stop", ["start"])),
+                keyboard_start="S",
+                keyboard_stop="D",
+            )
+
         return cls(
             mode=str(raw.get("mode", "dual")),
             bringup_config=str(raw.get("bringup_config", "config/bringup_htc.yaml")),
@@ -117,13 +159,8 @@ class SessionConfig:
             openvr_config=str(raw.get("openvr_config", "config/htc_openvr_tracker.yaml")),
             camera_config=str(raw.get("camera_config", "config/camera_config.yaml")),
             enable_camera=bool(raw.get("enable_camera", False)),
-            trigger=TriggerConfig(
-                trigger_mode=str(trigger_raw.get("trigger_mode", "both")),
-                gamepad_start=list(trigger_raw.get("gamepad_start", ["lb", "rb"])),
-                gamepad_stop=list(trigger_raw.get("gamepad_stop", ["start"])),
-                keyboard_start=str(trigger_raw.get("keyboard_start", "B")),
-                keyboard_stop=str(trigger_raw.get("keyboard_stop", "E")),
-            ),
+            teleop_trigger=teleop_trigger,
+            record_trigger=record_trigger,
         )
 
 
@@ -509,11 +546,20 @@ def _load_plan(
             "config": config.camera_config,
         },
         "trigger": {
-            "trigger_mode": config.trigger.trigger_mode,
-            "gamepad_start": list(config.trigger.gamepad_start or []),
-            "gamepad_stop": list(config.trigger.gamepad_stop or []),
-            "keyboard_start": config.trigger.keyboard_start,
-            "keyboard_stop": config.trigger.keyboard_stop,
+            "teleop": {
+                "trigger_mode": config.teleop_trigger.trigger_mode,
+                "gamepad_start": list(config.teleop_trigger.gamepad_start or []),
+                "gamepad_stop": list(config.teleop_trigger.gamepad_stop or []),
+                "keyboard_start": config.teleop_trigger.keyboard_start,
+                "keyboard_stop": config.teleop_trigger.keyboard_stop,
+            },
+            "record": {
+                "trigger_mode": config.record_trigger.trigger_mode,
+                "gamepad_start": list(config.record_trigger.gamepad_start or []),
+                "gamepad_stop": list(config.record_trigger.gamepad_stop or []),
+                "keyboard_start": config.record_trigger.keyboard_start,
+                "keyboard_stop": config.record_trigger.keyboard_stop,
+            },
         },
         "runtime_state": "initialized",
         "runtime": {},
@@ -614,7 +660,7 @@ def _wait_for_arm_ready(group: ManagedProcessGroup, timeout_sec: float = ARM_REA
                     bringup_stdout_pos = log.tell()
             except OSError:
                 chunk = ""
-            if any(marker in chunk for marker in ARM_LOG_FAILURE_MARKERS):
+            if _has_tianji_arm_failure(chunk):
                 raise RuntimeError(
                     "tianji_arm_controller failed during bringup: "
                     f"{_summarize_tianji_log_failure(chunk)}"
@@ -646,29 +692,132 @@ def _wait_for_arm_ready(group: ManagedProcessGroup, timeout_sec: float = ARM_REA
     )
 
 
-def _set_arm_teleop_enabled(enabled: bool) -> None:
-    # tianji_arm_node uses SetBool(True)=INFERENCE, SetBool(False)=TELEOP.
-    data = "false" if enabled else "true"
-    mode = "TELEOP" if enabled else "INFERENCE"
+def _topic_subscription_count(topic: str) -> int:
     completed = subprocess.run(
-        [
-            "ros2",
-            "service",
-            "call",
-            ARM_SWITCH_MODE_SERVICE,
-            "std_srvs/srv/SetBool",
-            f"{{data: {data}}}",
-        ],
+        ["ros2", "topic", "info", topic],
         check=False,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=5.0,
+        timeout=2.0,
     )
+    if completed.returncode != 0:
+        return 0
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("Subscription count:"):
+            try:
+                return int(line.split(":", 1)[1].strip())
+            except ValueError:
+                return 0
+    return 0
+
+
+def _wait_for_arm_command_subscribers(
+    group: ManagedProcessGroup,
+    timeout_sec: float = 20.0,
+) -> None:
+    """Wait for the SDK executor to subscribe before sending the start gate."""
+    deadline = time.monotonic() + timeout_sec
+    bringup_stdout_pos = 0
+    print("[session] waiting for Tianji SDK executor command subscribers")
+    while time.monotonic() < deadline:
+        bringup_stdout_path = None
+        for handle in group.handles:
+            if handle.spec.name == "bringup":
+                bringup_stdout_path = handle.spec.stdout_path
+            code = handle.process.poll()
+            if code is None or code == 0:
+                continue
+            if handle.spec.name == "bringup":
+                raise RuntimeError(f"{handle.spec.name} exited with code {code}")
+
+        if bringup_stdout_path is not None:
+            try:
+                with bringup_stdout_path.open("r", encoding="utf-8", errors="replace") as log:
+                    log.seek(bringup_stdout_pos)
+                    chunk = log.read()
+                    bringup_stdout_pos = log.tell()
+            except OSError:
+                chunk = ""
+            if _has_tianji_arm_failure(chunk):
+                raise RuntimeError(
+                    "tianji_arm_controller failed before SDK executor was ready: "
+                    f"{_summarize_tianji_log_failure(chunk)}"
+                )
+
+        counts = {topic: _topic_subscription_count(topic) for topic in ARM_COMMAND_TOPICS}
+        if all(count > 0 for count in counts.values()):
+            print("[session] Tianji SDK executor command subscribers ready")
+            return
+        time.sleep(0.5)
+    raise TimeoutError(
+        "Tianji SDK executor did not subscribe to arm command topics "
+        f"within {timeout_sec:.0f}s"
+    )
+
+
+def _set_arm_teleop_enabled(enabled: bool) -> None:
+    # tianji_arm_node uses SetBool(True)=INFERENCE, SetBool(False)=TELEOP.
+    data = "false" if enabled else "true"
+    mode = "TELEOP" if enabled else "INFERENCE"
+    current_mode = _get_arm_mode_if_available()
+    if current_mode == mode:
+        print(f"[session] Tianji arm mode already {mode}")
+        return
+    try:
+        completed = subprocess.run(
+            [
+                "ros2",
+                "service",
+                "call",
+                ARM_SWITCH_MODE_SERVICE,
+                "std_srvs/srv/SetBool",
+                f"{{data: {data}}}",
+            ],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=8.0,
+        )
+    except subprocess.TimeoutExpired:
+        current_mode = _get_arm_mode_if_available()
+        if current_mode == mode:
+            print(f"[session] Tianji arm mode -> {mode} (service call timed out after success)")
+            return
+        raise
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise RuntimeError(f"failed to switch Tianji arm to {mode}: {detail}")
     print(f"[session] Tianji arm mode -> {mode}")
+
+
+def _get_arm_mode_if_available() -> str | None:
+    try:
+        services = _list_ros_services()
+    except RuntimeError:
+        return None
+    if ARM_READY_SERVICE not in services:
+        return None
+    try:
+        completed = subprocess.run(
+            ["ros2", "service", "call", ARM_READY_SERVICE, "std_srvs/srv/Trigger", "{}"],
+            check=False,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            timeout=3.0,
+        )
+    except (FileNotFoundError, subprocess.TimeoutExpired):
+        return None
+    if completed.returncode != 0:
+        return None
+    for line in completed.stdout.splitlines():
+        line = line.strip()
+        if line.startswith("message:"):
+            return line.split("message:", 1)[1].strip().strip("'\"").upper()
+    return None
 
 
 def _list_ros_services() -> set[str]:
@@ -693,11 +842,22 @@ def _call_trigger_service(service_name: str) -> None:
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         text=True,
-        timeout=5.0,
+        timeout=12.0,
     )
     if completed.returncode != 0:
         detail = (completed.stderr or completed.stdout).strip()
         raise RuntimeError(f"failed to call {service_name}: {detail}")
+    success = None
+    message = ""
+    for line in completed.stdout.splitlines():
+        stripped = line.strip()
+        if stripped.startswith("success:"):
+            value = stripped.split("success:", 1)[1].strip().lower()
+            success = value == "true"
+        elif stripped.startswith("message:"):
+            message = stripped.split("message:", 1)[1].strip().strip("'\"")
+    if success is False:
+        raise RuntimeError(f"{service_name} rejected: {message or completed.stdout.strip()}")
     print(f"[session] called {service_name}")
 
 
@@ -710,7 +870,10 @@ def _arm_keyboard_gate_service_if_present(enabled: bool) -> None:
         return
     if service_name not in services:
         return
-    _call_trigger_service(service_name)
+    try:
+        _call_trigger_service(service_name)
+    except (RuntimeError, subprocess.TimeoutExpired) as exc:
+        raise RuntimeError(f"{service_name} failed: {exc}") from exc
 
 
 def _wait_for_runtime_control_events(runtime: SessionRuntime, trigger_cfg: TriggerConfig) -> str:
@@ -788,6 +951,12 @@ def _summarize_tianji_log_failure(chunk: str) -> str:
     return " | ".join(lines[-4:])
 
 
+def _has_tianji_arm_failure(chunk: str) -> bool:
+    return any(marker in chunk for marker in ARM_LOG_FAILURE_MARKERS) or (
+        "process has died" in chunk and "tianji_arm_controller" in chunk
+    )
+
+
 def _build_process_specs(plan: dict) -> list[ManagedProcessSpec]:
     logs_dir = Path("data").resolve() / "logs"
     logs_dir.mkdir(parents=True, exist_ok=True)
@@ -855,16 +1024,20 @@ def main() -> int:
     runtime = SessionRuntime(plan)
     try:
         runtime.enter_ready()
-        trigger = _build_trigger(session_cfg.trigger)
-        start_trigger = trigger.wait_for_start()
         runtime.process_group = _start_processes(plan, dry_run=args.dry_run)
         if plan.get("bringup", {}).get("enable_arm", False):
             _wait_for_arm_ready(runtime.process_group)
+            _set_arm_teleop_enabled(False)
+        print("[session] teleop: B/E (keyboard), record: S/D (keyboard)")
+        trigger = _build_trigger(session_cfg.teleop_trigger)
+        start_trigger = trigger.wait_for_start()
         runtime.enter_running(start_trigger)
         if plan.get("bringup", {}).get("enable_arm", False):
             _set_arm_teleop_enabled(True)
+            if plan.get("bringup", {}).get("arm_sdk_executor_enable", False):
+                _wait_for_arm_command_subscribers(runtime.process_group)
             _arm_keyboard_gate_service_if_present(True)
-        stop_trigger = _wait_for_runtime_control_events(runtime, session_cfg.trigger)
+        stop_trigger = _wait_for_runtime_control_events(runtime, session_cfg.teleop_trigger)
         if plan.get("bringup", {}).get("enable_arm", False):
             _arm_keyboard_gate_service_if_present(False)
         runtime.enter_stopped(stop_trigger)

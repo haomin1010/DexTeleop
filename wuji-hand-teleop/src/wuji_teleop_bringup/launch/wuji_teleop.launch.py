@@ -85,6 +85,31 @@ def generate_launch_description() -> LaunchDescription:
         default_value="false",
         description="Print Tianji arm commands without connecting to or driving the robot",
     )
+    controller_config_arg = DeclareLaunchArgument(
+        "controller_config",
+        default_value=_get_config_path("tianji_output", "tianji_output.yaml"),
+        description="Path to Tianji arm controller config file",
+    )
+    read_only_arg = DeclareLaunchArgument(
+        "read_only",
+        default_value="false",
+        description="Connect to Tianji feedback but never send robot commands",
+    )
+    feedback_handshake_arg = DeclareLaunchArgument(
+        "feedback_handshake",
+        default_value="false",
+        description="In read_only mode, send one non-motion SDK command sequence to start feedback",
+    )
+    sim_viz_arg = DeclareLaunchArgument(
+        "sim_viz",
+        default_value="false",
+        description="Publish RViz markers for tracker/Tianji target debugging",
+    )
+    sdk_executor_enable_arg = DeclareLaunchArgument(
+        "sdk_executor_enable",
+        default_value="false",
+        description="Enable separated Tianji SDK executor node",
+    )
     openvr_config_arg = DeclareLaunchArgument(
         "openvr_config",
         default_value=_get_config_path("openvr_input", "openvr_input.yaml"),
@@ -132,6 +157,11 @@ def generate_launch_description() -> LaunchDescription:
     enable_arm = LaunchConfiguration("enable_arm")
     enable_rviz = LaunchConfiguration("enable_rviz")
     dry_run = LaunchConfiguration("dry_run")
+    controller_config = LaunchConfiguration("controller_config")
+    read_only = LaunchConfiguration("read_only")
+    feedback_handshake = LaunchConfiguration("feedback_handshake")
+    sim_viz = LaunchConfiguration("sim_viz")
+    sdk_executor_enable = LaunchConfiguration("sdk_executor_enable")
     openvr_config = LaunchConfiguration("openvr_config")
     hand_config = LaunchConfiguration("hand_config")
 
@@ -150,6 +180,11 @@ def generate_launch_description() -> LaunchDescription:
         enable_arm_arg,
         enable_rviz_arg,
         dry_run_arg,
+        controller_config_arg,
+        read_only_arg,
+        feedback_handshake_arg,
+        sim_viz_arg,
+        sdk_executor_enable_arg,
         openvr_config_arg,
         hand_config_arg,
         left_serial_arg,
@@ -206,6 +241,8 @@ def generate_launch_description() -> LaunchDescription:
             executable="openvr_input",
             name="openvr_input",
             output="screen",
+            emulate_tty=True,
+            prefix=[_get_python_executable(), " "],
             arguments=["-c", openvr_config],
             condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", arm_input, "' == 'tracker'"])),
         ),
@@ -226,8 +263,35 @@ def generate_launch_description() -> LaunchDescription:
             output="screen",
             emulate_tty=True,
             prefix=[_get_python_executable(), " "],
-            arguments=[PythonExpression(["'--dry-run' if '", dry_run, "' == 'true' else ''"])],
+            arguments=[
+                "-c",
+                controller_config,
+                PythonExpression(["'--dry-run' if '", dry_run, "' == 'true' else ''"]),
+                PythonExpression(["'--read-only' if '", read_only, "' == 'true' else ''"]),
+                PythonExpression(["'--feedback-handshake' if '", feedback_handshake, "' == 'true' else ''"]),
+            ],
             condition=IfCondition(enable_arm),
+        ),
+        Node(
+            package="controller",
+            executable="tianji_tracker_sim_viz",
+            name="tianji_tracker_sim_viz",
+            output="screen",
+            emulate_tty=True,
+            condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", sim_viz, "' == 'true'"])),
+        ),
+        Node(
+            package="controller",
+            executable="tianji_sdk_executor",
+            name="tianji_sdk_executor",
+            output="screen",
+            emulate_tty=True,
+            prefix=[_get_python_executable(), " "],
+            arguments=[
+                "-c",
+                controller_config,
+            ],
+            condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", sdk_executor_enable, "' == 'true'"])),
         ),
 
         # ==================== HAND INPUT: Manus ====================

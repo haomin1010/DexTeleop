@@ -82,7 +82,11 @@ class Retargeter:
         )
 
     @classmethod
-    def from_yaml(cls, yaml_path: str, hand_side: str = "right") -> "Retargeter":
+    def from_yaml(
+        cls,
+        yaml_path: str,
+        hand_side: str = "right",
+    ) -> "Retargeter":
         """Create retargeter from YAML configuration file.
 
         Records the yaml's parent directory in ``config['__yaml_dir']`` so that
@@ -103,7 +107,11 @@ class Retargeter:
         return cls(config, hand_side)
 
     @classmethod
-    def from_config(cls, config: dict, hand_side: str = "right") -> "Retargeter":
+    def from_config(
+        cls,
+        config: dict,
+        hand_side: str = "right",
+    ) -> "Retargeter":
         """Create retargeter from configuration dict.
 
         Args:

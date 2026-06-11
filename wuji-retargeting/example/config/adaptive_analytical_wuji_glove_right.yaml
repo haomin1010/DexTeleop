@@ -23,8 +23,8 @@ retarget:
   lp_alpha: 0.2
 
   segment_scaling:
-    thumb:  [1.0, 1.0, 1.0]
-    index:  [1.0, 1.0, 1.0]
+    thumb:  [1.15, 1.15, 1.15]
+    index:  [1.15, 1.15, 1.15]
     middle: [1.0, 1.0, 1.0]
     ring:   [1.0, 1.0, 1.0]
     pinky:  [1.05, 1.05, 1.1]
@@ -52,8 +52,10 @@ retarget:
     x: -5.0
     y: -5.0
     z: -20.0
-  wrist_offset_cm: [0.17, 0.08, 1.03]
-  thumb_offset_cm: [0.04, -0.43, 1.71]
+  wrist_offset_cm: [0.0, 0.0, 0.0]
+  thumb_offset_cm: [0.0, 0.0, 0.0]
+  # wrist_offset_cm: [0.17, 0.08, 1.03]
+  # thumb_offset_cm: [0.04, -0.43, 1.71]
 
 wuji_glove:
   device_name: "glove"

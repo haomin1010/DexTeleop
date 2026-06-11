@@ -1,8 +1,9 @@
 from __future__ import annotations
 
 import argparse
+import math
 import time
-from typing import Optional
+from typing import Optional, Sequence
 
 import rclpy
 from rclpy.node import Node
@@ -53,9 +54,13 @@ class TianjiSdkExecutorNode(Node):
 
         self._last_left_cmd: Optional[list] = None
         self._last_right_cmd: Optional[list] = None
+        self._last_sent_left: Optional[list] = None
+        self._last_sent_right: Optional[list] = None
+        self._max_joint_step_deg = max(float(config.get("max_joint_step_deg", 2.5)), 0.0)
         self._last_send_time = 0.0
         self._min_period = 1.0 / max(float(control_rate_hz), 1.0)
         self._publish_hw_state = bool(publish_hw_state)
+        self._seed_current_joints()
 
         qos = get_default_qos()
         self.left_sub = self.create_subscription(JointState, LEFT_ARM_CMD_TOPIC, self._left_cmd_cb, qos)
@@ -67,7 +72,8 @@ class TianjiSdkExecutorNode(Node):
 
         self.get_logger().info(
             "SDK executor ready: subscribe joint_command, execute on robot, "
-            f"publish_hw_state={self._publish_hw_state}"
+            f"publish_hw_state={self._publish_hw_state}, "
+            f"max_joint_step_deg={self._max_joint_step_deg:.2f}"
         )
 
     def _left_cmd_cb(self, msg: JointState) -> None:
@@ -87,10 +93,62 @@ class TianjiSdkExecutorNode(Node):
         self._last_send_time = now
         if self._last_left_cmd is None and self._last_right_cmd is None:
             return
+        left_cmd = self._apply_joint_step_limit(self._last_left_cmd, self._last_sent_left)
+        right_cmd = self._apply_joint_step_limit(self._last_right_cmd, self._last_sent_right)
         self.controller.move_to_joints_direct(
-            left_joints=self._last_left_cmd,
-            right_joints=self._last_right_cmd,
+            left_joints=left_cmd,
+            right_joints=right_cmd,
         )
+        if left_cmd is not None:
+            self._last_sent_left = list(left_cmd)
+        if right_cmd is not None:
+            self._last_sent_right = list(right_cmd)
+
+    def _seed_current_joints(self) -> None:
+        try:
+            left_joints, right_joints = self.controller.get_current_joints()
+        except Exception as exc:
+            self.get_logger().warn(f"SDK executor: failed to read startup joints: {exc}")
+            return
+
+        if left_joints is not None:
+            self._last_left_cmd = [float(v) for v in left_joints]
+            self._last_sent_left = list(self._last_left_cmd)
+        if right_joints is not None:
+            self._last_right_cmd = [float(v) for v in right_joints]
+            self._last_sent_right = list(self._last_right_cmd)
+
+        if self._last_left_cmd is not None or self._last_right_cmd is not None:
+            self.controller.move_to_joints_direct(
+                left_joints=self._last_left_cmd,
+                right_joints=self._last_right_cmd,
+            )
+            self.get_logger().info(
+                "SDK executor: seeded startup hold command from current robot joints"
+            )
+
+    def _apply_joint_step_limit(
+        self,
+        target: Optional[Sequence[float]],
+        previous: Optional[Sequence[float]],
+    ) -> Optional[list]:
+        if target is None:
+            return None
+        target_values = [float(v) for v in target]
+        if self._max_joint_step_deg <= 0.0 or previous is None:
+            return target_values
+        if len(previous) != len(target_values):
+            return target_values
+
+        limited: list[float] = []
+        for goal, last in zip(target_values, previous):
+            delta = goal - float(last)
+            if not math.isfinite(delta):
+                limited.append(float(last))
+                continue
+            delta = max(-self._max_joint_step_deg, min(self._max_joint_step_deg, delta))
+            limited.append(float(last) + delta)
+        return limited
 
     def _publish_hw_state_cb(self) -> None:
         try:
@@ -138,4 +196,3 @@ def main(argv: Optional[list[str]] = None) -> None:
     finally:
         node.destroy_node()
         rclpy.shutdown()
-

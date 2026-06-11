@@ -194,7 +194,11 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
 
     if config.enable_arm:
         extra_args.append(f"enable_rviz:={'true' if config.enable_rviz else 'false'}")
-        if launch_file == "wuji_teleop_single.launch.py":
+        if launch_file in {
+            "wuji_teleop_single.launch.py",
+            "wuji_teleop.launch.py",
+            "wuji_teleop_camera.launch.py",
+        }:
             if config.arm_controller_config:
                 controller_config = _resolve_repo_path(config.arm_controller_config)
                 extra_args.append(f"controller_config:={controller_config}")

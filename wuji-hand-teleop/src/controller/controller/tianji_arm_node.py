@@ -9,6 +9,7 @@ Mode switching service: /tianji_arm/switch_mode
 from __future__ import annotations
 
 import argparse
+import contextlib
 import os
 import select
 import sys
@@ -21,6 +22,8 @@ from typing import Optional, Set
 
 import numpy as np
 import rclpy
+from rclpy.callback_groups import MutuallyExclusiveCallbackGroup, ReentrantCallbackGroup
+from rclpy.executors import MultiThreadedExecutor
 from rclpy.node import Node
 from rclpy.utilities import remove_ros_args
 from tf2_ros import Buffer, TransformListener
@@ -46,6 +49,7 @@ LEFT_ARM_CMD_IN_TOPIC = "/tianji_arm/left/joint_command_in"
 RIGHT_ARM_CMD_IN_TOPIC = "/tianji_arm/right/joint_command_in"
 LEFT_ARM_STATE_TOPIC = "/tianji_arm/left/joint_state"
 RIGHT_ARM_STATE_TOPIC = "/tianji_arm/right/joint_state"
+TELEOP_START_TF_WAIT_SEC = 5.0
 
 
 class TianjiArmControllerNode(Node):
@@ -53,7 +57,7 @@ class TianjiArmControllerNode(Node):
 
     def __init__(
         self,
-        robot_ip: str = '192.168.8.166',
+        robot_ip: str = '192.168.1.190',
         dry_run: bool = False,
         read_only: bool = False,
         feedback_handshake: bool = False,
@@ -80,6 +84,7 @@ class TianjiArmControllerNode(Node):
         tracker_orientation_source_frame_left: str = "left_wrist",
         tracker_orientation_map_mode: str = "identity",
         tracker_orientation_map_matrix: Optional[list] = None,
+        tracker_orientation_map_mirror_left: bool = False,
         tracker_orientation_debug: bool = False,
         tracker_wrist_local_enable: bool = False,
         tracker_wrist_local_hold_position: bool = False,
@@ -158,7 +163,7 @@ class TianjiArmControllerNode(Node):
     ):
         super().__init__("tianji_arm_controller")
 
-        self._mode = ControlMode.TELEOP
+        self._mode = ControlMode.INFERENCE
         self._logger_adapter = ROS2LoggerAdapter(self.get_logger())
         self._log_counter = 0
         self._dry_run = dry_run
@@ -317,7 +322,7 @@ class TianjiArmControllerNode(Node):
         self._init_move_sides = init_move_sides
         self._init_move_duration_sec = max(float(init_move_duration_sec), 0.1)
         self._teleop_active_sides = self._parse_teleop_active_sides(teleop_active_sides)
-        self._teleop_armed = not self._keyboard_teleop_gate
+        self._teleop_armed = False
         self._align_in_progress = False
         self._keyboard_lock = threading.Lock()
         self._pending_keyboard_start = False
@@ -360,10 +365,21 @@ class TianjiArmControllerNode(Node):
         self._pin_target_offset = {"left": None, "right": None}
         self._pin_fk_alignment_checked = {"left": False, "right": False}
         self._pinocchio_urdf_resolved = None
+        self._tracker_orientation_map_mirror_left = bool(tracker_orientation_map_mirror_left)
         self._tracker_orientation_map = self._parse_tracker_orientation_map(
             self._tracker_orientation_map_mode,
             tracker_orientation_map_matrix,
         )
+        mirror_y = np.diag([1.0, -1.0, 1.0])
+        left_map = (
+            mirror_y @ self._tracker_orientation_map @ mirror_y
+            if self._tracker_orientation_map_mirror_left
+            else self._tracker_orientation_map
+        )
+        self._tracker_orientation_maps = {
+            "right": self._tracker_orientation_map,
+            "left": left_map,
+        }
 
         # Initialize controller
         if self._read_only:
@@ -394,22 +410,27 @@ class TianjiArmControllerNode(Node):
         if self._use_pinocchio_ik:
             self._init_pinocchio_ik()
 
-        # Move to initial position
-        if self._read_only:
-            self.get_logger().info("Read only: keeping robot at its current physical joint angles")
-        elif self._dry_run:
-            self.get_logger().info("Dry run: using configured initial joints as IK reference")
-            self.controller.move_to_init(wait=False, timeout=0)
+        # Move to initial position (session runner arms teleop via start_teleop service).
+        if self._keyboard_teleop_gate:
+            if self._read_only:
+                self.get_logger().info("Read only: keeping robot at its current physical joint angles")
+            elif self._dry_run:
+                self.get_logger().info("Dry run: using configured initial joints as IK reference")
+                self.controller.move_to_init(wait=False, timeout=0)
+            else:
+                self.get_logger().info(
+                    f"Moving arm to initial position (sides={self._init_move_sides}, "
+                    f"{self._init_move_duration_sec:.1f}s)..."
+                )
+                self.controller.move_to_init(
+                    wait=True,
+                    timeout=1,
+                    duration=self._init_move_duration_sec,
+                    sides=self._init_move_sides,
+                )
         else:
             self.get_logger().info(
-                f"Moving arm to initial position (sides={self._init_move_sides}, "
-                f"{self._init_move_duration_sec:.1f}s)..."
-            )
-            self.controller.move_to_init(
-                wait=True,
-                timeout=1,
-                duration=self._init_move_duration_sec,
-                sides=self._init_move_sides,
+                "Session teleop gate: holding current pose until /tianji_arm/start_teleop"
             )
         if self._keyboard_teleop_gate:
             self.get_logger().info(
@@ -496,6 +517,8 @@ class TianjiArmControllerNode(Node):
         self.right_inference_joints = None
 
         qos = get_default_qos()
+        self._service_callback_group = ReentrantCallbackGroup()
+        self._control_callback_group = MutuallyExclusiveCallbackGroup()
 
         # Publishers
         self.left_cmd_pub = self.create_publisher(JointState, LEFT_ARM_CMD_TOPIC, qos)
@@ -515,14 +538,42 @@ class TianjiArmControllerNode(Node):
         self._set_inference_subscriptions(self._mode == ControlMode.INFERENCE)
 
         # Services
-        self.create_service(SetBool, '/tianji_arm/switch_mode', self._switch_mode_callback)
-        self.create_service(Trigger, '/tianji_arm/get_mode', self._get_mode_callback)
-        self.create_service(Trigger, '/tianji_arm/reset_tracker_zero', self._reset_tracker_zero_callback)
-        if self._keyboard_teleop_gate:
-            self.create_service(Trigger, '/tianji_arm/start_teleop', self._start_teleop_callback)
-            self.create_service(Trigger, '/tianji_arm/stop_teleop', self._stop_teleop_callback)
+        self.create_service(
+            SetBool,
+            '/tianji_arm/switch_mode',
+            self._switch_mode_callback,
+            callback_group=self._service_callback_group,
+        )
+        self.create_service(
+            Trigger,
+            '/tianji_arm/get_mode',
+            self._get_mode_callback,
+            callback_group=self._service_callback_group,
+        )
+        self.create_service(
+            Trigger,
+            '/tianji_arm/reset_tracker_zero',
+            self._reset_tracker_zero_callback,
+            callback_group=self._service_callback_group,
+        )
+        self.create_service(
+            Trigger,
+            '/tianji_arm/start_teleop',
+            self._start_teleop_callback,
+            callback_group=self._service_callback_group,
+        )
+        self.create_service(
+            Trigger,
+            '/tianji_arm/stop_teleop',
+            self._stop_teleop_callback,
+            callback_group=self._service_callback_group,
+        )
 
-        self.create_timer(1.0 / self._control_rate_hz, self._control_loop)
+        self.create_timer(
+            1.0 / self._control_rate_hz,
+            self._control_loop,
+            callback_group=self._control_callback_group,
+        )
 
         self.get_logger().info(
             f"Initialization complete, mode: {self._mode.value.upper()}. "
@@ -646,14 +697,13 @@ class TianjiArmControllerNode(Node):
         return response
 
     def _start_teleop_callback(self, request: Trigger.Request, response: Trigger.Response):
-        with self._keyboard_lock:
-            self._pending_keyboard_start = True
-        response.success = True
-        response.message = (
-            f"Teleop start queued (same as {self._keyboard_start_key}). "
-            "Wait for align + tracker zero bind."
-        )
-        self.get_logger().info(response.message)
+        success, message = self._execute_keyboard_start()
+        response.success = success
+        response.message = message
+        if success:
+            self.get_logger().info(response.message)
+        else:
+            self.get_logger().warn(response.message)
         return response
 
     def _stop_teleop_callback(self, request: Trigger.Request, response: Trigger.Response):
@@ -819,7 +869,67 @@ class TianjiArmControllerNode(Node):
             out.append(float(r) + delta)
         return out
 
-    def _execute_keyboard_start(self) -> None:
+    def _align_side_target(
+        self,
+        side: str,
+        current: list,
+        ik_joints: Optional[list],
+    ) -> tuple[list, bool]:
+        align_target = list(current)
+        use_ik_align = False
+        if ik_joints is None or side not in self._teleop_active_sides:
+            return align_target, use_ik_align
+        delta = self._joint_max_delta_deg(current, ik_joints)
+        self.get_logger().info(
+            f"First IK {side} (deg): {[round(float(v), 2) for v in ik_joints]}, "
+            f"max_delta_from_current={delta:.1f}"
+        )
+        if (
+            self._keyboard_align_max_ik_delta_deg <= 0.0
+            or delta <= self._keyboard_align_max_ik_delta_deg
+        ):
+            align_target = list(ik_joints)
+            use_ik_align = True
+        else:
+            self.get_logger().warn(
+                f"First IK {side} differs from current by {delta:.1f}deg "
+                f"(limit {self._keyboard_align_max_ik_delta_deg:.1f}) at tracker zero. "
+                "Holding calib joints for align (not bad IK branch). Fix static TF / wrist map."
+            )
+        return align_target, use_ik_align
+
+    def _smooth_align_publish(
+        self,
+        left_target: list,
+        right_target: list,
+        start_left: list,
+        start_right: list,
+        duration: float,
+        dt: float = 0.03,
+    ) -> None:
+        cmd_sides = self._sdk_cmd_sides()
+        num_points = max(int(duration / dt), 1)
+        for i in range(num_points + 1):
+            t = i / num_points
+            s = 10 * (t ** 3) - 15 * (t ** 4) + 6 * (t ** 5)
+            interp_left = [
+                start_left[j] + s * (left_target[j] - start_left[j]) for j in range(7)
+            ]
+            interp_right = [
+                start_right[j] + s * (right_target[j] - start_right[j]) for j in range(7)
+            ]
+            left_cmd = interp_left if cmd_sides in ("both", "left") else None
+            right_cmd = interp_right if cmd_sides in ("both", "right") else None
+            if self._dry_run:
+                self._publish_command(left_cmd, right_cmd)
+            else:
+                self.controller.move_to_joints_direct(
+                    left_joints=left_cmd,
+                    right_joints=right_cmd,
+                )
+            time.sleep(dt)
+
+    def _execute_keyboard_start(self) -> tuple[bool, str]:
         """B: stand at INIT/calib → 3s joint move to first IK frame → reset tracker zero → teleop."""
         self.get_logger().info(
             f"Keyboard start ({self._keyboard_start_key}): "
@@ -828,33 +938,45 @@ class TianjiArmControllerNode(Node):
         self._align_in_progress = True
         try:
             self._reset_tracker_state()
-            if not self._update_tracker_poses_from_tf():
-                self.get_logger().warn("Tracker TF not ready; try B again")
-                return
-
-            left_cur, right_cur = self.controller.get_current_joints()
-            _, right_ik = self._compute_teleop_ik_joints()
-
-            align_target = list(right_cur)
-            use_ik_align = False
-            if right_ik is not None:
-                delta = self._joint_max_delta_deg(right_cur, right_ik)
-                self.get_logger().info(
-                    f"First IK (deg): {[round(float(v), 2) for v in right_ik]}, "
-                    f"max_delta_from_current={delta:.1f}"
+            self.get_logger().info("[start_teleop] stage=reset_tracker_state_done")
+            if not self._wait_for_tracker_tf_ready():
+                message = (
+                    f"Tracker TF not ready within {TELEOP_START_TF_WAIT_SEC:.1f}s; try B again"
                 )
-                if (
-                    self._keyboard_align_max_ik_delta_deg <= 0.0
-                    or delta <= self._keyboard_align_max_ik_delta_deg
-                ):
-                    align_target = list(right_ik)
-                    use_ik_align = True
-                else:
-                    self.get_logger().warn(
-                        f"First IK differs from current by {delta:.1f}deg "
-                        f"(limit {self._keyboard_align_max_ik_delta_deg:.1f}) at tracker zero. "
-                        "Holding calib joints for 3s (not bad IK branch). Fix static TF / wrist map."
-                    )
+                self.get_logger().warn(message)
+                return False, message
+            self.get_logger().info("[start_teleop] stage=tracker_tf_ready")
+
+            self.get_logger().info("[start_teleop] stage=get_current_joints_begin")
+            left_cur, right_cur = self.controller.get_current_joints()
+            self.get_logger().info(
+                "[start_teleop] stage=get_current_joints_done "
+                f"left_cur={[round(v, 3) for v in left_cur]} "
+                f"right_cur={[round(v, 3) for v in right_cur]}"
+            )
+            self.get_logger().info("[start_teleop] stage=compute_teleop_ik_begin")
+            left_ik, right_ik = self._compute_teleop_ik_joints()
+            self.get_logger().info(
+                "[start_teleop] stage=compute_teleop_ik_done "
+                f"left_ik={None if left_ik is None else [round(v, 3) for v in left_ik]} "
+                f"right_ik={None if right_ik is None else [round(v, 3) for v in right_ik]}"
+            )
+
+            self.get_logger().info("[start_teleop] stage=align_side_target_left_begin")
+            align_left, left_use_ik = self._align_side_target("left", list(left_cur), left_ik)
+            self.get_logger().info(
+                "[start_teleop] stage=align_side_target_left_done "
+                f"use_ik={left_use_ik} "
+                f"align_left={[round(v, 3) for v in align_left]}"
+            )
+            self.get_logger().info("[start_teleop] stage=align_side_target_right_begin")
+            align_right, right_use_ik = self._align_side_target("right", list(right_cur), right_ik)
+            self.get_logger().info(
+                "[start_teleop] stage=align_side_target_right_done "
+                f"use_ik={right_use_ik} "
+                f"align_right={[round(v, 3) for v in align_right]}"
+            )
+            use_ik_align = left_use_ik or right_use_ik
 
             if self._keyboard_start_align_sec > 0.0:
                 if use_ik_align:
@@ -865,31 +987,33 @@ class TianjiArmControllerNode(Node):
                     self.get_logger().info(
                         f"Holding calib joints {self._keyboard_start_align_sec:.1f}s..."
                     )
-                self.controller.move_to_joints_smooth(
-                    left_target=None,
-                    right_target=align_target,
-                    duration=self._keyboard_start_align_sec,
-                    dt=0.03,
-                    cmd_sides=self._sdk_cmd_sides(),
+                self.get_logger().info("[start_teleop] stage=smooth_align_publish_begin")
+                self._smooth_align_publish(
+                    left_target=align_left,
+                    right_target=align_right,
                     start_left=list(left_cur),
                     start_right=list(right_cur),
+                    duration=self._keyboard_start_align_sec,
                 )
-                self._publish_command(None, align_target)
+                self.get_logger().info("[start_teleop] stage=smooth_align_publish_done")
 
             self._reset_tracker_state()
+            self.get_logger().info("[start_teleop] stage=post_align_reset_tracker_state_done")
             self.controller._last_left_ik_joints = None
             self.controller._last_right_ik_joints = None
             self._last_command_joints = {"left": None, "right": None}
+            if "left" in self._teleop_active_sides:
+                self._last_command_joints["left"] = list(align_left)
             if "right" in self._teleop_active_sides:
-                self._last_command_joints["right"] = list(align_target)
+                self._last_command_joints["right"] = list(align_right)
             self._teleop_armed = True
             self._teleop_zero_warmup_remaining = 0
             self._teleop_ik_grace_remaining = 0
             self._start_time = time.monotonic()
             self._logged_tracker_delay = False
-            self.get_logger().info(
-                f"Teleop armed. Tracker zero binds on next TF; then IK teleop."
-            )
+            message = "Teleop armed. Tracker zero binds on next TF; then IK teleop."
+            self.get_logger().info(message)
+            return True, message
         finally:
             self._align_in_progress = False
 
@@ -928,6 +1052,19 @@ class TianjiArmControllerNode(Node):
                 if self.right_pose is not None:
                     ok = True
         return ok
+
+    def _wait_for_tracker_tf_ready(
+        self,
+        timeout_sec: float = TELEOP_START_TF_WAIT_SEC,
+        poll_sec: float = 0.05,
+    ) -> bool:
+        deadline = time.monotonic() + max(float(timeout_sec), 0.0)
+        while True:
+            if self._update_tracker_poses_from_tf():
+                return True
+            if time.monotonic() >= deadline:
+                return False
+            time.sleep(max(float(poll_sec), 0.01))
 
     def _tracker_zero_ready(self, side: str) -> bool:
         return (
@@ -975,7 +1112,7 @@ class TianjiArmControllerNode(Node):
 
     def _control_loop(self):
         self._publish_state()
-        if self._keyboard_teleop_gate:
+        if self._keyboard_teleop_gate or self._pending_keyboard_start or self._pending_keyboard_stop:
             self._handle_pending_keyboard()
 
         if self._mode == ControlMode.TELEOP:
@@ -985,7 +1122,9 @@ class TianjiArmControllerNode(Node):
 
     def _teleop_control(self):
         """Teleoperation control: TF → IK → robot"""
-        if self._keyboard_teleop_gate and (not self._teleop_armed or self._align_in_progress):
+        if self._align_in_progress:
+            return
+        if not self._teleop_armed:
             return
         elapsed = time.monotonic() - self._start_time
         if elapsed < self._tracker_start_delay_sec:
@@ -1042,17 +1181,22 @@ class TianjiArmControllerNode(Node):
             l_joints, r_joints = self._compute_teleop_ik_joints()
             if use_pin:
                 l_joints, r_joints = self._limit_teleop_joint_commands(l_joints, r_joints)
-            if r_joints is not None and "right" in self._teleop_active_sides:
-                ref = self._last_command_joints.get("right")
-                if ref is not None and self._teleop_ik_max_step_deg > 0.0:
-                    raw_delta = self._joint_max_delta_deg(ref, r_joints)
-                    if raw_delta > self._teleop_ik_max_step_deg:
-                        r_joints = self._slew_joints_deg(ref, r_joints, self._teleop_ik_max_step_deg)
-                self._last_command_joints["right"] = list(r_joints)
-            elif r_joints is None and "right" in self._teleop_active_sides:
-                hold = self._last_command_joints.get("right")
-                if hold is not None:
-                    r_joints = list(hold)
+            for side, joints in (("left", l_joints), ("right", r_joints)):
+                if joints is not None and side in self._teleop_active_sides:
+                    ref = self._last_command_joints.get(side)
+                    if ref is not None and self._teleop_ik_max_step_deg > 0.0:
+                        raw_delta = self._joint_max_delta_deg(ref, joints)
+                        if raw_delta > self._teleop_ik_max_step_deg:
+                            joints = self._slew_joints_deg(ref, joints, self._teleop_ik_max_step_deg)
+                    self._last_command_joints[side] = list(joints)
+                elif joints is None and side in self._teleop_active_sides:
+                    hold = self._last_command_joints.get(side)
+                    if hold is not None:
+                        joints = list(hold)
+                if side == "left":
+                    l_joints = joints
+                else:
+                    r_joints = joints
             self._publish_command(l_joints, r_joints)
 
         # Publish null-space parameters and end-effector poses
@@ -1730,8 +1874,8 @@ class TianjiArmControllerNode(Node):
         )
         return r_map
 
-    def _map_tracker_delta_rotation(self, delta_rot: np.ndarray) -> np.ndarray:
-        r_map = self._tracker_orientation_map
+    def _map_tracker_delta_rotation(self, delta_rot: np.ndarray, side: str) -> np.ndarray:
+        r_map = self._tracker_orientation_maps[side]
         return r_map @ delta_rot @ r_map.T
 
     def _log_tracker_orientation_debug(
@@ -2181,7 +2325,7 @@ class TianjiArmControllerNode(Node):
             self._update_wrist_orientation_delta(side, tracker_tf[:3, :3])
         elif self._tracker_orientation_mode in ("full", "full_pose", "blended", "yaw_only"):
             tracker_delta_rot = self._tracker_zero[side][:3, :3].T @ tracker_tf[:3, :3]
-            mapped_delta_rot = self._map_tracker_delta_rotation(tracker_delta_rot)
+            mapped_delta_rot = self._map_tracker_delta_rotation(tracker_delta_rot, side)
             full_rot = self._robot_zero[side][:3, :3] @ mapped_delta_rot
             if self._tracker_orientation_mode == "full":
                 target[:3, :3] = full_rot
@@ -2278,7 +2422,7 @@ class TianjiArmControllerNode(Node):
             if self._tracker_ori_zero[side] is None:
                 self._tracker_ori_zero[side] = np.array(orientation_source_tf[:3, :3], dtype=np.float64)
             tracker_delta_rot = self._tracker_ori_zero[side].T @ orientation_source_tf[:3, :3]
-            mapped_delta_rot = self._map_tracker_delta_rotation(tracker_delta_rot)
+            mapped_delta_rot = self._map_tracker_delta_rotation(tracker_delta_rot, side)
             raw_target_rot = self._robot_zero[side][:3, :3] @ mapped_delta_rot
             blended_rot = self._blend_rotation(
                 self._robot_zero[side][:3, :3],
@@ -2650,6 +2794,7 @@ def main(argv: Optional[list[str]] = None):
     )
     tracker_orientation_map_mode = str(config.get("tracker_orientation_map_mode", "identity"))
     tracker_orientation_map_matrix = config.get("tracker_orientation_map_matrix")
+    tracker_orientation_map_mirror_left = bool(config.get("tracker_orientation_map_mirror_left", False))
     tracker_orientation_debug = bool(config.get("tracker_orientation_debug", False))
     tracker_wrist_local_enable = bool(config.get("tracker_wrist_local_enable", False))
     tracker_wrist_local_hold_position = bool(config.get("tracker_wrist_local_hold_position", False))
@@ -2792,7 +2937,7 @@ def main(argv: Optional[list[str]] = None):
     init_move_duration_sec = float(config.get("init_move_duration_sec", 3.0))
     teleop_active_sides = str(config.get("teleop_active_sides", "right"))
     node = TianjiArmControllerNode(
-        robot_ip=config.get("robot_ip", "192.168.8.166"),
+        robot_ip=config.get("robot_ip", "192.168.1.190"),
         dry_run=dry_run,
         read_only=read_only,
         feedback_handshake=feedback_handshake,
@@ -2819,6 +2964,7 @@ def main(argv: Optional[list[str]] = None):
         tracker_orientation_source_frame_left=tracker_orientation_source_frame_left,
         tracker_orientation_map_mode=tracker_orientation_map_mode,
         tracker_orientation_map_matrix=tracker_orientation_map_matrix,
+        tracker_orientation_map_mirror_left=tracker_orientation_map_mirror_left,
         tracker_orientation_debug=tracker_orientation_debug,
         tracker_wrist_local_enable=tracker_wrist_local_enable,
         tracker_wrist_local_hold_position=tracker_wrist_local_hold_position,
@@ -2896,11 +3042,17 @@ def main(argv: Optional[list[str]] = None):
         teleop_active_sides=teleop_active_sides,
     )
 
+    executor = None
     try:
-        rclpy.spin(node)
+        executor = MultiThreadedExecutor(num_threads=2)
+        executor.add_node(node)
+        executor.spin()
     except KeyboardInterrupt:
         pass
     finally:
+        if executor is not None:
+            with contextlib.suppress(Exception):
+                executor.shutdown()
         node.shutdown()
         node.destroy_node()
         if rclpy.ok():

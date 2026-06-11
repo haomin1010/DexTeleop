@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import sys
+import time
 from dataclasses import dataclass, fields
 from pathlib import Path
 from typing import Any, Dict, Optional
@@ -42,6 +43,8 @@ class OpenVRInputConfig:
     # Wrist tracker offset in tracker's local frame [x, y, z] (meters)
     # Applied before coordinate correction to map tracker position to actual wrist
     wrist_offset: Optional[list] = None
+    left_wrist_offset: Optional[list] = None
+    right_wrist_offset: Optional[list] = None
 
     # Publishing settings
     publish_rate_hz: float = 120.0
@@ -88,6 +91,19 @@ class OpenVRInputNode(Node):
     def __init__(self, config: OpenVRInputConfig):
         super().__init__("openvr_input")
         self.config = config
+        effective_left_wrist_offset = (
+            self.config.left_wrist_offset
+            if self.config.left_wrist_offset is not None
+            else self.config.wrist_offset
+        )
+        effective_right_wrist_offset = (
+            self.config.right_wrist_offset
+            if self.config.right_wrist_offset is not None
+            else self.config.wrist_offset
+        )
+        self._effective_left_wrist_offset = effective_left_wrist_offset
+        self._left_wrist_debug_interval_sec = 0.5
+        self._last_left_wrist_debug_time = 0.0
 
         if not self.config.tracker_serials:
             raise ValueError(
@@ -98,15 +114,33 @@ class OpenVRInputNode(Node):
         self.get_logger().info(
             f"[OpenVR Input] Initializing with trackers: {list(self.config.tracker_serials.keys())}"
         )
+        if self.config.config_path:
+            self.get_logger().info(
+                f"[OpenVR Input] Loaded config file: {self.config.config_path}"
+            )
         if self.config.wrist_offset:
             self.get_logger().info(
                 f"[OpenVR Input] Wrist offset (local frame): {self.config.wrist_offset}"
             )
+        if self.config.left_wrist_offset:
+            self.get_logger().info(
+                f"[OpenVR Input] Left wrist offset override: {self.config.left_wrist_offset}"
+            )
+        if self.config.right_wrist_offset:
+            self.get_logger().info(
+                f"[OpenVR Input] Right wrist offset override: {self.config.right_wrist_offset}"
+            )
+        self.get_logger().info(
+            "[OpenVR Input] Effective wrist offsets (local frame): "
+            f"left={effective_left_wrist_offset}, right={effective_right_wrist_offset}"
+        )
 
         # Initialize OpenVR tracker wrapper
         self.tracker_wrapper = OpenVRTrackerWrapper(
             self.config.tracker_serials,
-            wrist_offset=self.config.wrist_offset
+            wrist_offset=self.config.wrist_offset,
+            left_wrist_offset=self.config.left_wrist_offset,
+            right_wrist_offset=self.config.right_wrist_offset,
         )
 
         # Create TF broadcaster
@@ -182,6 +216,7 @@ class OpenVRInputNode(Node):
                 "left_wrist",
                 current_time
             )
+            self._maybe_log_left_wrist_debug(left_wrist_pose)
 
         # Process left arm tracker (upper arm)
         left_arm_pose = poses.get('left_arm')
@@ -231,6 +266,21 @@ class OpenVRInputNode(Node):
 
         self.tf_broadcaster.sendTransform(t)
 
+    def _maybe_log_left_wrist_debug(self, matrix: np.ndarray) -> None:
+        now = time.monotonic()
+        if now - self._last_left_wrist_debug_time < self._left_wrist_debug_interval_sec:
+            return
+
+        self._last_left_wrist_debug_time = now
+        x, y, z = matrix[:3, 3].tolist()
+        roll_deg, pitch_deg, yaw_deg = self._rotation_matrix_to_rpy_deg(matrix[:3, :3])
+        self.get_logger().info(
+            "[OpenVR Input] Left wrist debug: "
+            f"offset_local={self._effective_left_wrist_offset}, "
+            f"pos=({x:.4f}, {y:.4f}, {z:.4f}), "
+            f"rpy_deg=({roll_deg:.1f}, {pitch_deg:.1f}, {yaw_deg:.1f})"
+        )
+
     @staticmethod
     def _rotation_matrix_to_quaternion(R: np.ndarray) -> np.ndarray:
         """Convert 3x3 rotation matrix to quaternion [x, y, z, w]."""
@@ -262,6 +312,22 @@ class OpenVRInputNode(Node):
             z = 0.25 * s
 
         return np.array([x, y, z, w])
+
+    @staticmethod
+    def _rotation_matrix_to_rpy_deg(rotation: np.ndarray) -> tuple[float, float, float]:
+        sy = float(np.sqrt(rotation[0, 0] ** 2 + rotation[1, 0] ** 2))
+        singular = sy < 1e-6
+
+        if not singular:
+            roll = float(np.arctan2(rotation[2, 1], rotation[2, 2]))
+            pitch = float(np.arctan2(-rotation[2, 0], sy))
+            yaw = float(np.arctan2(rotation[1, 0], rotation[0, 0]))
+        else:
+            roll = float(np.arctan2(-rotation[1, 2], rotation[1, 1]))
+            pitch = float(np.arctan2(-rotation[2, 0], sy))
+            yaw = 0.0
+
+        return tuple(np.degrees([roll, pitch, yaw]).tolist())
 
     def shutdown(self) -> None:
         """Shutdown the node and cleanup resources."""
