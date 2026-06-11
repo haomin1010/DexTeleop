@@ -18,6 +18,10 @@ log/
 data/
 *.log
 *.ndjson
+backups/
+workspace/
+frames_*.gv
+frames_*.pdf
 
 # Editor
 .vscode/
