@@ -23,7 +23,7 @@ import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, ExecuteProcess, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -56,6 +56,32 @@ def _get_python_executable() -> str:
     if os.environ.get("CONDA_PREFIX"):
         return str(Path(os.environ["CONDA_PREFIX"]) / "bin" / "python")
     return sys.executable
+
+
+def _get_package_root(package: str) -> Path:
+    """Get the install root for a package."""
+    return Path(get_package_share_directory(package)).resolve().parent.parent
+
+
+def _get_package_executable(package: str, executable: str) -> str:
+    """Get the installed executable path for a package."""
+    package_root = _get_package_root(package)
+    return str(package_root / "lib" / package / executable)
+
+
+def _get_openvr_pythonpath() -> str:
+    """Build a PYTHONPATH that exposes the openvr_input ROS package to conda Python."""
+    package_root = _get_package_root("openvr_input")
+    workspace_root = package_root.parent.parent
+    candidates = [
+        workspace_root / "build" / "openvr_input",
+        package_root / "lib" / f"python{sys.version_info.major}.{sys.version_info.minor}" / "site-packages",
+    ]
+    existing = os.environ.get("PYTHONPATH", "")
+    entries = [str(path) for path in candidates if path.exists()]
+    if existing:
+        entries.append(existing)
+    return os.pathsep.join(entries)
 
 
 def generate_launch_description() -> LaunchDescription:
@@ -236,14 +262,21 @@ def generate_launch_description() -> LaunchDescription:
 
         # ==================== ARM INPUT: Tracker ====================
         # OpenVR Input Node (for tracker arm tracking)
-        Node(
-            package="openvr_input",
-            executable="openvr_input",
-            name="openvr_input",
+        ExecuteProcess(
+            cmd=[
+                _get_python_executable(),
+                _get_package_executable("openvr_input", "openvr_input"),
+                "-c",
+                openvr_config,
+                "--ros-args",
+                "-r",
+                "__node:=openvr_input",
+            ],
             output="screen",
-            emulate_tty=True,
-            prefix=[_get_python_executable(), " "],
-            arguments=["-c", openvr_config],
+            additional_env={
+                "PYTHONPATH": _get_openvr_pythonpath(),
+            },
+            shell=False,
             condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", arm_input, "' == 'tracker'"])),
         ),
 
@@ -280,16 +313,21 @@ def generate_launch_description() -> LaunchDescription:
             emulate_tty=True,
             condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", sim_viz, "' == 'true'"])),
         ),
-        Node(
-            package="controller",
-            executable="tianji_sdk_executor",
-            name="tianji_sdk_executor",
-            output="screen",
-            emulate_tty=True,
-            prefix=[_get_python_executable(), " "],
-            arguments=[
-                "-c",
-                controller_config,
+        TimerAction(
+            period=3.0,
+            actions=[
+                Node(
+                    package="controller",
+                    executable="tianji_sdk_executor",
+                    name="tianji_sdk_executor",
+                    output="screen",
+                    emulate_tty=True,
+                    prefix=[_get_python_executable(), " "],
+                    arguments=[
+                        "-c",
+                        controller_config,
+                    ],
+                ),
             ],
             condition=IfCondition(PythonExpression(["'", enable_arm, "' == 'true' and '", sdk_executor_enable, "' == 'true'"])),
         ),

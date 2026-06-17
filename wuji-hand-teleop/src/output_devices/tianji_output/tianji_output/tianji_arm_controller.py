@@ -326,19 +326,36 @@ class TianjiArmController:
         self.robot.send_cmd()
         time.sleep(0.3)
 
-    def _verify_connection(self):
+    def _verify_connection(self, timeout_sec: float = 8.0, interval_sec: float = 0.1):
         """Verify robot connection"""
         dcss = DCSS()
         motion_tag = 0
         frame_update = None
-        for i in range(5):
-            sub_data = self.robot.subscribe(dcss)
-            serial = sub_data['outputs'][0]['frame_serial']
+        deadline = time.monotonic() + max(float(timeout_sec), 0.1)
+        samples = 0
+        while time.monotonic() < deadline:
+            samples += 1
+            try:
+                sub_data = self.robot.subscribe(dcss)
+                serial = sub_data['outputs'][0]['frame_serial']
+            except Exception as exc:
+                self.logger.warning(f"Robot feedback verification subscribe failed: {exc}")
+                time.sleep(interval_sec)
+                continue
             if serial != 0 and frame_update != serial:
                 motion_tag += 1
                 frame_update = serial
-            time.sleep(0.1)
-        return motion_tag > 0
+                if motion_tag > 0:
+                    self.logger.info(
+                        f"Robot feedback verified: frame_serial={serial} samples={samples}"
+                    )
+                    return True
+            time.sleep(interval_sec)
+        self.logger.warning(
+            "Robot feedback verification timed out: "
+            f"last_frame_serial={frame_update} samples={samples} timeout_sec={timeout_sec:.1f}"
+        )
+        return False
 
     # ==================== State Retrieval Methods ====================
 

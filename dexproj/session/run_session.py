@@ -49,9 +49,16 @@ ARM_COMMAND_TOPICS = (
     "/tianji_arm/right/joint_command",
 )
 ARM_LOG_FAILURE_MARKERS = (
-    "[ERROR] [tianji_arm_controller",
+    "process has died",
+    "Traceback (most recent call last):",
+    "RuntimeError:",
+    "ImportError:",
     "ModuleNotFoundError:",
     "ConnectionError:",
+)
+ARM_PROCESS_NAMES = (
+    "tianji_arm_controller",
+    "tianji_sdk_executor",
 )
 
 DEFAULT_CAMERA_TOPIC_SPECS = {
@@ -218,6 +225,7 @@ class SessionRuntime:
         self.status_writer.start(self._build_status_snapshot)
         self.active_episode_dir = paths.episode_dir
         print(f"[session] episode dir: {paths.episode_dir}")
+        self._report_camera_startup()
 
     def stop_episode(self, trigger: str) -> None:
         if self.active_episode_dir is None:
@@ -440,6 +448,35 @@ class SessionRuntime:
                 + f" (see {output_path})"
             )
 
+    def _report_camera_startup(self, timeout_sec: float = 3.0) -> None:
+        if not self.camera_writers:
+            return
+        deadline = time.monotonic() + timeout_sec
+        for recorder in self.camera_writers:
+            remaining = max(deadline - time.monotonic(), 0.0)
+            recorder.wait_for_first_frame(remaining)
+
+        snapshots = [recorder.snapshot() for recorder in self.camera_writers]
+        missing = [
+            str(camera["name"])
+            for camera in snapshots
+            if int(camera.get("frame_count", 0) or 0) <= 0
+        ]
+        active = [
+            f"{camera['name']}={camera['active_topic']}"
+            for camera in snapshots
+            if int(camera.get("frame_count", 0) or 0) > 0
+        ]
+        if active:
+            print("[session] camera recording active: " + ", ".join(active))
+        if missing:
+            print(
+                "[session] WARNING: no image frames after "
+                f"{timeout_sec:.1f}s: {', '.join(missing)}; "
+                "this episode will have empty image folders for those cameras",
+                flush=True,
+            )
+
 
 def _load_camera_config_dict(camera_config_path: str) -> dict:
     if yaml is None:
@@ -481,6 +518,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="DexProj unified session runner.")
     parser.add_argument("--config", default="config/session_htc_wuji_glove.yaml", help="Session config file.")
     parser.add_argument("--task", default="", help="Task name written into each recorded episode meta.json.")
+    parser.add_argument(
+        "--session-name",
+        default="",
+        help="Custom session folder name under data/raw, for example session_pick_cup_20260616.",
+    )
     parser.add_argument("--dry-run", action="store_true", help="Print resolved commands without executing.")
     parser.add_argument("--skip-preflight", action="store_true", help="Skip device preflight checks.")
     return parser
@@ -503,6 +545,7 @@ def _load_plan(
     hand_cfg: HandTeleopConfig,
     bringup_cfg: BringupConfig,
     task: str = "",
+    session_name: str = "",
 ) -> dict:
     if config.mode not in VALID_SESSION_MODES:
         raise ValueError(f"Unsupported session mode: {config.mode}")
@@ -521,6 +564,7 @@ def _load_plan(
     return {
         "mode": config.mode,
         "task": str(task).strip(),
+        "session_name": str(session_name).strip(),
         "bringup": {
             "config": config.bringup_config,
             "command": bringup_command,
@@ -742,7 +786,7 @@ def _wait_for_arm_command_subscribers(
                 chunk = ""
             if _has_tianji_arm_failure(chunk):
                 raise RuntimeError(
-                    "tianji_arm_controller failed before SDK executor was ready: "
+                    "Tianji SDK executor failed before command subscribers were ready: "
                     f"{_summarize_tianji_log_failure(chunk)}"
                 )
 
@@ -945,15 +989,26 @@ def _start_gamepad_stop_waiter(trigger_cfg: TriggerConfig) -> dict:
 
 
 def _summarize_tianji_log_failure(chunk: str) -> str:
-    lines = [line.strip() for line in chunk.splitlines() if "tianji_arm_controller" in line or "Error:" in line]
+    lines = [
+        line.strip()
+        for line in chunk.splitlines()
+        if any(process_name in line for process_name in ARM_PROCESS_NAMES)
+        or any(marker in line for marker in ARM_LOG_FAILURE_MARKERS)
+        or "port bind failure" in line
+    ]
     if not lines:
         return "see data/logs/bringup.stdout.log"
-    return " | ".join(lines[-4:])
+    return " | ".join(lines[-8:])
 
 
 def _has_tianji_arm_failure(chunk: str) -> bool:
-    return any(marker in chunk for marker in ARM_LOG_FAILURE_MARKERS) or (
-        "process has died" in chunk and "tianji_arm_controller" in chunk
+    return any(
+        any(process_name in line for process_name in ARM_PROCESS_NAMES)
+        and (
+            "[ERROR]" in line
+            or any(marker in line for marker in ARM_LOG_FAILURE_MARKERS)
+        )
+        for line in chunk.splitlines()
     )
 
 
@@ -995,6 +1050,7 @@ def _resolve_configs(config_path: Path) -> tuple[SessionConfig, BringupConfig, H
         str(Path(session_cfg.hand_teleop_config).expanduser().resolve()),
         "--hand-input",
         "none",
+        "--no-camera",
         "--openvr-config",
         str(Path(session_cfg.openvr_config).expanduser().resolve()),
         "--skip-preflight",
@@ -1016,7 +1072,14 @@ def main() -> int:
             print("[preflight] Use `python3 -m dexproj.check_devices` for details.")
             return 2
 
-    plan = _load_plan(session_cfg, bringup_command, hand_cfg, bringup_cfg, task=args.task)
+    plan = _load_plan(
+        session_cfg,
+        bringup_command,
+        hand_cfg,
+        bringup_cfg,
+        task=args.task,
+        session_name=args.session_name,
+    )
     if args.dry_run:
         _print_dry_run(plan)
         return 0
@@ -1033,9 +1096,9 @@ def main() -> int:
         start_trigger = trigger.wait_for_start()
         runtime.enter_running(start_trigger)
         if plan.get("bringup", {}).get("enable_arm", False):
-            _set_arm_teleop_enabled(True)
             if plan.get("bringup", {}).get("arm_sdk_executor_enable", False):
                 _wait_for_arm_command_subscribers(runtime.process_group)
+            _set_arm_teleop_enabled(True)
             _arm_keyboard_gate_service_if_present(True)
         stop_trigger = _wait_for_runtime_control_events(runtime, session_cfg.teleop_trigger)
         if plan.get("bringup", {}).get("enable_arm", False):

@@ -541,6 +541,7 @@ class RosImageFrameRecorder:
     reliability: str = "best_effort"
     _thread: threading.Thread | None = field(default=None, init=False)
     _stop_event: threading.Event = field(default_factory=threading.Event, init=False)
+    _first_frame_event: threading.Event = field(default_factory=threading.Event, init=False)
     _node: Node | None = field(default=None, init=False)
     _executor: SingleThreadedExecutor | None = field(default=None, init=False)
     _frame_index: int = field(default=0, init=False)
@@ -599,6 +600,12 @@ class RosImageFrameRecorder:
                 f"max_gap_ms={self._max_interval_ms:.1f} avg_save_ms={avg_save_ms:.1f} "
                 f"max_save_ms={self._save_time_max_ms:.1f} long_gaps={self._long_gap_count} "
                 f"slow_saves={self._slow_save_count}",
+                flush=True,
+            )
+        else:
+            print(
+                f"[camera-recorder:{self.name}] warning stop frames=0 "
+                f"topics={[self.topic, *self.fallback_topics]}",
                 flush=True,
             )
 
@@ -667,6 +674,10 @@ class RosImageFrameRecorder:
         ])
         if self._csv_fp is not None:
             self._csv_fp.flush()
+        self._first_frame_event.set()
+
+    def wait_for_first_frame(self, timeout_sec: float) -> bool:
+        return self._first_frame_event.wait(timeout=max(float(timeout_sec), 0.0))
 
     def snapshot(self) -> dict[str, object]:
         now = time.time()

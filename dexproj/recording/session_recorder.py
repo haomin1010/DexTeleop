@@ -30,7 +30,15 @@ class SessionRecorder:
 
     def start(self, plan: dict, start_trigger: str) -> RecorderPaths:
         now = time.localtime()
-        self.session_name = f"session_{now.tm_year:04d}_{now.tm_mon:02d}_{now.tm_mday:02d}"
+        requested_session_name = str(plan.get("session_name", "") or "").strip()
+        if requested_session_name:
+            if Path(requested_session_name).name != requested_session_name or requested_session_name in {".", ".."}:
+                raise ValueError(
+                    "session_name must be a single directory name without path separators."
+                )
+            self.session_name = requested_session_name
+        else:
+            self.session_name = f"session_{now.tm_year:04d}_{now.tm_mon:02d}_{now.tm_mday:02d}"
         session_dir = self.data_root / "raw" / self.session_name
         session_dir.mkdir(parents=True, exist_ok=True)
 

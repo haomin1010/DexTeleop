@@ -96,6 +96,7 @@ def create_realsense_camera(
     enable_gyro = str(streams.get('enable_gyro', False)).lower()
     enable_accel = str(streams.get('enable_accel', False)).lower()
     enable_auto_exposure = str(cam_config.get('enable_auto_exposure', False)).lower()
+    initial_reset = str(cam_config.get('initial_reset', False)).lower()
     exposure = str(cam_config.get('exposure', 120))
     gain = str(cam_config.get('gain', 16))
 
@@ -128,7 +129,7 @@ def create_realsense_camera(
         'config_file': "''",
         'camera_name': cam_name,
         'camera_namespace': '',
-        'initial_reset': 'false',
+        'initial_reset': initial_reset,
         'device_type': cam_type,
         'serial_no': f"'{serial_no}'" if serial_no else "''",
         'enable_depth': enable_depth,

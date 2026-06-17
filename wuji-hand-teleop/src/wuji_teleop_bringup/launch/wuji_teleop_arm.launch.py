@@ -22,7 +22,7 @@ import sys
 
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.conditions import IfCondition, LaunchConfigurationEquals
 from launch.substitutions import LaunchConfiguration, PythonExpression
 from launch_ros.actions import Node
@@ -177,16 +177,21 @@ def generate_launch_description() -> LaunchDescription:
             emulate_tty=True,
             condition=IfCondition(sim_viz),
         ),
-        Node(
-            package="controller",
-            executable="tianji_sdk_executor",
-            name="tianji_sdk_executor",
-            output="screen",
-            emulate_tty=True,
-            prefix=[_get_python_executable(), " "],
-            arguments=[
-                "-c",
-                controller_config,
+        TimerAction(
+            period=3.0,
+            actions=[
+                Node(
+                    package="controller",
+                    executable="tianji_sdk_executor",
+                    name="tianji_sdk_executor",
+                    output="screen",
+                    emulate_tty=True,
+                    prefix=[_get_python_executable(), " "],
+                    arguments=[
+                        "-c",
+                        controller_config,
+                    ],
+                ),
             ],
             condition=IfCondition(sdk_executor_enable),
         ),

@@ -9,7 +9,7 @@ optimizer:
 retarget:
   huber_delta: 2.0
   huber_delta_dir: 0.5
-  norm_delta: 0.04
+  norm_delta: 0.08
   w_pos: 1.0
   w_dir: 2.0
   scaling: 1.0
@@ -24,13 +24,13 @@ retarget:
 
   segment_scaling:
     thumb:  [1.05, 1.05, 1.05]
-    index:  [1.15, 1.15, 1.15]
-    middle: [1.05, 1.05, 1.05]
-    ring:   [1.0, 1.0, 1.0]
-    pinky:  [1.05, 1.0, 1.1]
+    index:  [1.18, 1.20, 1.18]
+    middle: [1.15, 1.15, 1.15]
+    ring:   [1.05, 1.05, 1.09]
+    pinky:  [1.1, 1.1, 1.3]
 
   # segment_scaling:
-  #   thumb:  [0.99, 0.935, 0.935]
+  #   thumb:  [0.99, 0.935, 0.935
   #   index:  [1.15, 1.15, 1.1]
   #   middle: [1.1, 1.1, 1.05]
   #   ring:   [1.1, 1.1, 1.05]
@@ -52,8 +52,10 @@ retarget:
     x: 5.0
     y: -5.0
     z: 20.0
-  wrist_offset_cm: [0.0, 0.0, 0.0]   # disabled: SDK uses per-SN calibrated URDF, no extra bias needed
-  thumb_offset_cm: [0.0, 0.0, 0.0]   # disabled: same reason
+  # wrist_offset_cm: [0.0, 0.0, 0.0]   # disabled: SDK uses per-SN calibrated URDF, no extra bias needed
+  # thumb_offset_cm: [0.0, 0.0, 0.0]   # disabled: same reason
+  wrist_offset_cm: [0.17, 0.08, 1.03]
+  thumb_offset_cm: [0.04, -0.43, 1.71]
 
 wuji_glove:
   device_name: "glove"

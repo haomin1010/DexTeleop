@@ -3,12 +3,12 @@ backend: ros2
 auto_discover_glove_sn: true
 hands:
   left:
-    glove_sn: WG1JA03260509001
-    hand_sn: '348334623533'
+    glove_sn: WG1JA03260514001
+    hand_sn: '367335743333'
     glove_device_name: glove_left
     retarget_config: wuji-retargeting/example/config/adaptive_analytical_wuji_glove_left.yaml
   right:
     glove_sn: WG1KA03260517029
-    hand_sn: '306835693434'
+    hand_sn: '306735563434'
     glove_device_name: glove_right
     retarget_config: wuji-retargeting/example/config/adaptive_analytical_wuji_glove_right.yaml

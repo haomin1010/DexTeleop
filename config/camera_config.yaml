@@ -1,5 +1,5 @@
 global:
-  startup_delay: 2.0
+  startup_delay: 3.0
   enable_sync: false
 
 cameras:
@@ -13,7 +13,7 @@ cameras:
     resolution:
       width: 424
       height: 240
-      fps: 60
+      fps: 30
     camera_name: cam_head
     streams:
       enable_color: true
@@ -35,13 +35,14 @@ cameras:
     enabled: true
     type: d405
     serial_number: 260522279586
+    initial_reset: true
     video_device: /dev/cam_left_wrist
     pixel_format: mjpeg2rgb
     io_method: mmap
     resolution:
       width: 424
       height: 240
-      fps: 60
+      fps: 30
     camera_name: cam_left_wrist
     streams:
       enable_color: true
@@ -69,7 +70,7 @@ cameras:
     resolution:
       width: 424
       height: 240
-      fps: 60
+      fps: 30
     camera_name: cam_right_wrist
     streams:
       enable_color: true

@@ -119,6 +119,11 @@ def build_arg_parser() -> argparse.ArgumentParser:
         help="Enable camera launch even if config disables it.",
     )
     parser.add_argument(
+        "--no-camera",
+        action="store_true",
+        help="Disable camera launch even if config enables it.",
+    )
+    parser.add_argument(
         "--rviz",
         action="store_true",
         help="Enable RViz even if config disables it.",
@@ -148,9 +153,6 @@ def resolve_launch_command(config: BringupConfig) -> list[str]:
         )
     if config.mode not in VALID_MODES:
         raise ValueError(f"Unsupported mode: {config.mode}")
-    if not config.enable_arm and config.enable_camera:
-        raise ValueError("Hand-only bringup does not support camera launch yet.")
-
     launch_file: str
     extra_args: list[str] = []
 
@@ -267,10 +269,13 @@ def main() -> int:
         config.hand_input = args.hand_input
     if args.camera:
         config.enable_camera = True
+    if args.no_camera:
+        config.enable_camera = False
     if args.rviz:
         config.enable_rviz = True
     if args.hand_only:
         config.enable_arm = False
+        config.enable_camera = False
         if config.hand_input == "none":
             config.hand_input = "wuji_glove"
 

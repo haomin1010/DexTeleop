@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
-PATTERN='/usr/bin/wuji-studio|runtime/teleop_bridge.py|hand_zenoh_bridge|teleop_real.py|wuji_glove_input|wujihand_controller|wujihand_driver_node|ros2 launch wuji_teleop|wuji_teleop.launch|wuji_teleop_hand.launch|wuji_teleop_single.launch'
+PATTERN='/usr/bin/wuji-studio|runtime/teleop_bridge.py|hand_zenoh_bridge|teleop_real.py|wuji_glove_input|wujihand_controller|wujihand_driver_node|tianji_arm_controller|tianji_sdk_executor|ros2 launch wuji_teleop|wuji_teleop.launch|wuji_teleop_hand.launch|wuji_teleop_single.launch'
 
 echo "[dexproj] stopping Wuji/DexProj runtime processes..."
 
